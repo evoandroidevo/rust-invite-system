@@ -1,0 +1,8 @@
+[package]
+name = "rust-invite-system"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+topcoat = "0.8.0"
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
