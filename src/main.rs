@@ -1,28 +1,30 @@
+mod app_state;
+mod configuration;
+mod invite_storage;
+mod lldap;
+mod routes;
+mod validation;
+mod views;
+
 use topcoat::{
-    Result,
-    router::{Router, RouterBuilderDiscoverExt, page},
-    view::{View, view},
+    asset::{AssetBundle, RouterBuilderAssetExt},
+    router::{Router, RouterBuilderDiscoverExt},
 };
+
+use crate::{app_state::AppState, configuration::AppConfig};
 
 #[tokio::main]
 async fn main() {
-    topcoat::start(Router::builder().discover().build())
+    let config = AppConfig::load("config.toml").expect("configuration must be valid");
+    std::fs::create_dir_all("data").expect("database directory must be available");
+    let state = AppState::initialize(config)
         .await
-        .unwrap();
-}
+        .expect("application state must initialize");
+    let router = Router::builder()
+        .discover()
+        .assets(AssetBundle::load().expect("asset bundle must be available"))
+        .app_context(state)
+        .build();
 
-#[page("/")]
-async fn home() -> Result<impl View> {
-    Ok(view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8" />
-                <title>"Rust Invite System"</title>
-            </head>
-            <body>
-                <h1>"Rust Invite System"</h1>
-            </body>
-        </html>
-    })
+    topcoat::start(router).await.unwrap();
 }

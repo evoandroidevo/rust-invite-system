@@ -24,3 +24,8 @@ target
 # Added by cargo
 
 /target
+
+# Local LLDAP integration-test credentials
+/dev.env
+/config.toml
+/data/

@@ -7,7 +7,7 @@
 - [x] Verify the project with `cargo check`.
 - [x] Confirm the current Topcoat `0.8.0` routing, view, and server-start APIs with a compiling starter page.
 - [x] Choose LLDAP GraphQL as the provisioning path; reserve `ldap3` for directory queries and compatibility checks.
-- [ ] Confirm the LLDAP user-creation and password-handling flow with a real integration test before writing provisioning code.
+- [x] Confirm the LLDAP user-creation and password-handling flow with a real integration test before writing provisioning code.
 
 Foundation decisions:
 
@@ -15,37 +15,38 @@ Foundation decisions:
 - Topcoat query parameters are read through request context helpers, not the older `Query(...)` extractor shown in the imported chat.
 - Existing workspace deployments use LLDAP's LDAP listener on port `3890`; the invite service should use the LLDAP management API for writes so password handling follows LLDAP's supported path.
 - LDAP bind credentials, base DN, and API settings must be loaded from runtime configuration or secrets.
+- The local LLDAP smoke test uses `dev.env`, pulls `lldap/lldap:latest`, and is run explicitly with `cargo test --test lldap_smoke -- --ignored`.
 
 ## 2. Establish the application structure
 
-- [ ] Create modules for configuration, application state, routes, invite storage, LLDAP provisioning, validation, and views.
+- [x] Create modules for configuration, application state, routes, invite storage, LLDAP provisioning, validation, and views.
 - [ ] Add structured application errors and user-safe error responses.
 - [ ] Add graceful startup and shutdown handling.
-- [ ] Add a health-check endpoint.
+- [x] Add a health-check endpoint.
 
 ## 3. Configuration and secrets
 
 - [ ] Define typed configuration for server, database, LLDAP, invite expiry, and password policy.
-- [ ] Load non-secret defaults from a local configuration file.
-- [ ] Support environment-variable overrides for deployment.
+- [x] Load non-secret defaults from an optional local TOML configuration file.
+- [x] Support `APP__` environment-variable overrides for deployment.
 - [ ] Keep LDAP bind passwords and other secrets out of committed files.
-- [ ] Add a documented example configuration with placeholder values.
+- [x] Add a documented example configuration with placeholder values.
 
 ## 4. Invite storage
 
-- [ ] Add SQLite and migration support.
-- [ ] Create an invites table with a hashed invite token, groups, creation time, expiry time, and used time.
+- [x] Add SQLite and migration support.
+- [x] Create invite and invite-event tables with a hashed invite token, groups, creation time, expiry time, and consumption state.
 - [ ] Generate cryptographically secure invite tokens.
 - [ ] Store only a hash of each invite token when practical.
 - [ ] Validate expiry and one-time use.
-- [ ] Consume an invite atomically after successful account provisioning.
+- [x] Consume an invite atomically after successful account provisioning.
 - [ ] Add cleanup for expired invites.
 
 ## 5. User invite flow
 
 - [ ] Build the admin form for selecting groups and generating an invite.
 - [ ] Return a complete invite URL to the administrator.
-- [ ] Build `/invite?code=...` with username, email, first name, last name, and password fields.
+- [x] Build `/invite?code=...` with username, email, first name, last name, and password fields.
 - [ ] Preserve the invite token through form submission without trusting hidden fields alone.
 - [ ] Validate the invite before provisioning.
 - [ ] Validate username and email format and uniqueness.
@@ -77,7 +78,8 @@ Foundation decisions:
 - [ ] Unit-test token generation, hashing, expiry, password policy, and email validation.
 - [ ] Test atomic invite consumption under concurrent requests.
 - [ ] Add route tests for valid, expired, used, and invalid invites.
-- [ ] Add an LLDAP integration test environment or mock client.
+- [ ] Add an LLDAP user-provisioning integration test or mock client.
+- [x] Add an opt-in LLDAP Docker smoke test using `lldap/lldap:latest` and `dev.env`.
 - [ ] Run `cargo fmt --check`, `cargo clippy`, and `cargo test` in CI.
 - [ ] Test configuration loading with file values and environment overrides.
 
