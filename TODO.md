@@ -96,8 +96,8 @@ Foundation decisions:
 
 ## 10. Documentation
 
-- [ ] Update the README with local development setup.
-- [ ] Document the invite lifecycle and security assumptions.
-- [ ] Document required LLDAP permissions and attributes.
-- [ ] Document configuration keys and deployment commands.
-- [ ] Add an operations checklist for rotating credentials and backing up data.
+- [x] Update the README with local development setup.
+- [x] Document the invite lifecycle and security assumptions.
+- [x] Document required LLDAP permissions and attributes.
+- [x] Document configuration keys and deployment commands.
+- [x] Add an operations checklist for rotating credentials and backing up data.

@@ -6,6 +6,10 @@ The files in this directory show two deployment patterns:
 
 - [docs/caddy/Caddyfile.example](docs/caddy/Caddyfile.example)
 - [docs/nginx/rust-invite-system.conf.example](docs/nginx/rust-invite-system.conf.example)
+- [docs/invite-lifecycle.md](docs/invite-lifecycle.md)
+- [docs/lldap-requirements.md](docs/lldap-requirements.md)
+- [docs/configuration.md](docs/configuration.md)
+- [docs/operations.md](docs/operations.md)
 
 Both examples terminate TLS at the proxy, protect `/admin` with authentication, and forward the usual client headers to the app.
 
