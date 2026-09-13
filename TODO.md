@@ -87,12 +87,12 @@ Foundation decisions:
 
 ## 9. Deployment
 
-- [ ] Add a multi-stage Dockerfile using a current Rust builder image.
-- [ ] Add a non-root runtime container.
-- [ ] Add Docker Compose with persistent SQLite storage and read-only configuration mounts.
-- [ ] Bind the application only to the reverse proxy network or localhost.
-- [ ] Add a reverse proxy configuration with HTTPS and admin route protection.
-- [ ] Document database backups, secret injection, upgrades, and recovery.
+- [x] Add a multi-stage Dockerfile using a current Rust builder image.
+- [x] Add a non-root runtime container.
+- [x] Add Docker Compose with persistent SQLite storage and read-only configuration mounts.
+- [x] Bind the application only to the reverse proxy network or localhost.
+- [x] Add a reverse proxy configuration with HTTPS and admin route protection.
+- [x] Document database backups, secret injection, upgrades, and recovery.
 
 ## 10. Documentation
 

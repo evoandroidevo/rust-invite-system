@@ -1,0 +1,49 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      APP__DATABASE__URL: sqlite://./data/invites.db
+      APP__SERVER__HOST: 0.0.0.0
+      APP__SERVER__PORT: 8080
+      APP__LDAP__HTTP_URL: ${APP_LDAP_HTTP_URL:?set APP_LDAP_HTTP_URL}
+      APP__LDAP__LDAP_URL: ${APP_LDAP_LDAP_URL:?set APP_LDAP_LDAP_URL}
+      APP__LDAP__USE_TLS: ${APP_LDAP_USE_TLS:-false}
+      APP__LDAP__TLS_INSECURE_SKIP_VERIFY: ${APP_LDAP_TLS_INSECURE_SKIP_VERIFY:-false}
+      APP__LDAP__BASE_DN: ${APP_LDAP_BASE_DN:?set APP_LDAP_BASE_DN}
+      APP__LDAP__USERNAME: ${APP_LDAP_USERNAME:?set APP_LDAP_USERNAME}
+      APP__LDAP__PASSWORD: ${APP_LDAP_PASSWORD:?set APP_LDAP_PASSWORD}
+    volumes:
+      - app-data:/app/data
+      - ./config.toml:/app/config.toml:ro
+    networks:
+      - backend
+
+  proxy:
+    image: caddy:2.8
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docs/caddy/Caddyfile.example:/etc/caddy/Caddyfile:ro
+      - ./docs/caddy/certs:/etc/caddy/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      CADDY_ADMIN_PASSWORD_HASH: ${CADDY_ADMIN_PASSWORD_HASH:?set CADDY_ADMIN_PASSWORD_HASH}
+    networks:
+      - backend
+
+volumes:
+  app-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  backend:
+    internal: true

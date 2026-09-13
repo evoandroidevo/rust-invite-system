@@ -44,6 +44,8 @@ Use a dedicated LLDAP service account for provisioning instead of an all-powerfu
 
 Reverse-proxy examples for Caddy and Nginx live in [docs/README.md](docs/README.md).
 
+The production container and compose deployment notes live in [docs/deployment.md](docs/deployment.md).
+
 ## LLDAP smoke test
 
 The ignored Docker integration test starts `lldap/lldap:latest` with the values in `dev.env` and waits for its HTTP service.
