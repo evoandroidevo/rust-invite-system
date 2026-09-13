@@ -1,17 +1,54 @@
+use chrono::{DateTime, Duration, Utc};
+use rand::{Rng, distr::Alphanumeric};
+use serde::Deserialize;
 use topcoat::{
     Result,
     asset::{Asset, asset},
     context::{Cx, app_context},
-    router::{page, query_params},
+    router::{
+        content::Form,
+        error::{SeeOther, see_other},
+        page, query_params, route,
+    },
     view::{View, view},
 };
+use uuid::Uuid;
 
 use crate::app_state::AppState;
+use crate::invite_storage::{InviteRecord, hash_token};
+use crate::validation::{validate_email, validate_password, validate_username};
 use crate::views;
 
 #[query_params(error = bad_request)]
 struct InviteQuery {
     code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GenerateInviteForm {
+    groups: String,
+    expiration_hours: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevokeInviteForm {
+    id: String,
+}
+
+fn invite_status(record: &InviteRecord, now: DateTime<Utc>) -> &'static str {
+    if record.revoked_at.is_some() {
+        "Revoked"
+    } else if record.consumed_at.is_some() {
+        "Used"
+    } else if record
+        .expires_at
+        .parse::<DateTime<Utc>>()
+        .is_ok_and(|expires_at| expires_at <= now)
+    {
+        "Expired"
+    } else {
+        "Active"
+    }
 }
 
 const INVITE_CSS: &str = r#"
@@ -113,6 +150,21 @@ const INVITE_CSS: &str = r#"
         font-size: .78rem;
         font-weight: 500;
     }
+    .form-errors {
+        margin: 0 0 1rem;
+        padding: .75rem 1rem .75rem 1.5rem;
+        border: 1px solid #c0392b;
+        border-radius: .55rem;
+        background: rgba(192, 57, 43, .1);
+        color: #c0392b;
+        font-size: .85rem;
+        line-height: 1.5;
+    }
+    body.theme-dark .form-errors {
+        border-color: #e07a5f;
+        background: rgba(224, 122, 95, .16);
+        color: #f4b8a4;
+    }
     button {
         min-height: 3rem;
         margin-top: .5rem;
@@ -154,15 +206,16 @@ const INVITE_CSS: &str = r#"
     }
 "#;
 
-const THEME_LIGHT_ICON: Asset = asset!("./assets/icons/theme-light.svg");
-const THEME_DARK_ICON: Asset = asset!("./assets/icons/theme-dark.svg");
+const THEME_LIGHT_ICON: Asset = asset!("../assets/icons/theme-light.svg");
+const THEME_DARK_ICON: Asset = asset!("../assets/icons/theme-dark.svg");
 
 const THEME_SCRIPT: &str = r#"
     const body = document.body;
     const toggle = document.getElementById('theme-toggle');
     const savedTheme = localStorage.getItem('invite-theme');
     if (savedTheme === 'light' || savedTheme === 'dark') {
-        body.className = `signup-shell theme-${savedTheme}`;
+        body.classList.remove('theme-light', 'theme-dark');
+        body.classList.add(`theme-${savedTheme}`);
     }
     function updateThemeLabel() {
         const isDark = body.classList.contains('theme-dark');
@@ -172,9 +225,204 @@ const THEME_SCRIPT: &str = r#"
     updateThemeLabel();
     toggle.addEventListener('click', function () {
         const nextTheme = body.classList.contains('theme-dark') ? 'light' : 'dark';
-        body.className = `signup-shell theme-${nextTheme}`;
+        body.classList.remove('theme-light', 'theme-dark');
+        body.classList.add(`theme-${nextTheme}`);
         localStorage.setItem('invite-theme', nextTheme);
         updateThemeLabel();
+    });
+"#;
+
+const ADMIN_CSS: &str = r#"
+    :root {
+        color-scheme: light dark;
+        --page-bg: #f5f1eb;
+        --card-bg: rgba(255, 253, 249, .96);
+        --text: #17212b;
+        --muted: #59636c;
+        --label: #263440;
+        --input-bg: #fffdfa;
+        --border: #c9c2ba;
+        --accent: #b24b35;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--text);
+        background: radial-gradient(circle at top left, #f9d7c5 0, transparent 34rem), var(--page-bg);
+    }
+    body.theme-dark {
+        --page-bg: #17212b;
+        --card-bg: #1d2832;
+        --text: #f4f0e9;
+        --muted: #b8c0c5;
+        --label: #e5e1da;
+        --input-bg: #24313c;
+        --border: #52606b;
+        --accent: #e07a5f;
+        color-scheme: dark;
+    }
+    .admin-shell {
+        width: min(100%, 54rem);
+        margin: 0 auto;
+        padding: 3rem 1rem;
+    }
+    .admin-header { margin-bottom: 2rem; }
+    .eyebrow {
+        margin: 0 0 .65rem;
+        color: var(--accent);
+        font-size: .75rem;
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.05; }
+    .intro { max-width: 38rem; margin: .9rem 0 0; color: var(--muted); line-height: 1.55; }
+    .admin-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(15rem, .65fr); gap: 1rem; }
+    .admin-card {
+        padding: clamp(1.25rem, 4vw, 2rem);
+        border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+        border-radius: 1rem;
+        background: var(--card-bg);
+        box-shadow: 0 1.5rem 4rem rgba(67, 47, 37, .12);
+    }
+    .admin-card h2 { margin: 0 0 .5rem; font-size: 1.15rem; }
+    .admin-card p { margin: 0 0 1.5rem; color: var(--muted); line-height: 1.5; }
+    form { display: grid; gap: 1rem; }
+    label { display: grid; gap: .45rem; color: var(--label); font-size: .88rem; font-weight: 700; }
+    input {
+        width: 100%;
+        min-height: 2.9rem;
+        padding: .7rem .8rem;
+        border: 1px solid var(--border);
+        border-radius: .55rem;
+        background: var(--input-bg);
+        color: var(--text);
+        font: inherit;
+    }
+    input:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 22%, transparent); }
+    button {
+        min-height: 3rem;
+        margin-top: .35rem;
+        border: 0;
+        border-radius: .55rem;
+        background: var(--accent);
+        color: #fffdfa;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 800;
+    }
+    button:hover { filter: brightness(.92); }
+    .stat { display: grid; gap: .35rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .stat strong { font-size: 1.7rem; }
+    .stat span { color: var(--muted); font-size: .82rem; }
+    .theme-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: .45rem;
+        min-height: 2.25rem;
+        margin: 0;
+        padding: .45rem .7rem;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        font-size: .78rem;
+    }
+    .theme-icon { width: 3.75rem; height: auto; display: block; }
+    .theme-icon-dark { display: none; }
+    body.theme-dark .theme-icon-light { display: none; }
+    body.theme-dark .theme-icon-dark { display: block; }
+    .admin-header-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+    .history-card { margin-top: 1rem; }
+    .history-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: .88rem;
+    }
+    .history-table th, .history-table td {
+        padding: .6rem .5rem;
+        border-bottom: 1px solid var(--border);
+        text-align: left;
+        vertical-align: top;
+    }
+    .history-table th { color: var(--muted); font-weight: 700; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+    .hash-cell { font-family: ui-monospace, monospace; font-size: .74rem; cursor: help; }
+    .status-badge {
+        display: inline-block;
+        padding: .2rem .55rem;
+        border-radius: .4rem;
+        font-size: .74rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: .03em;
+    }
+    .status-active { background: color-mix(in srgb, #2f9e44 20%, transparent); color: #2f9e44; }
+    .status-used { background: color-mix(in srgb, var(--muted) 20%, transparent); color: var(--muted); }
+    .status-expired { background: color-mix(in srgb, #c9820a 20%, transparent); color: #c9820a; }
+    .status-revoked { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+    .revoke-form { margin: 0; }
+    .revoke-button {
+        min-height: 2rem;
+        margin: 0;
+        padding: .35rem .6rem;
+        border: 1px solid var(--border);
+        border-radius: .4rem;
+        background: transparent;
+        color: var(--accent);
+        font-size: .78rem;
+        font-weight: 700;
+    }
+    .revoke-button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    dialog#invite-modal {
+        width: min(92vw, 32rem);
+        padding: 0;
+        border: none;
+        border-radius: 1rem;
+        background: transparent;
+        overflow: visible;
+    }
+    dialog#invite-modal::backdrop { background: rgba(23, 33, 43, .55); }
+    dialog#invite-modal .admin-card { margin: 0; }
+    dialog#invite-modal #invite-modal-close { margin-top: 1rem; }
+    @media (max-width: 42rem) { .admin-grid { grid-template-columns: 1fr; } }
+"#;
+
+const ADMIN_MODAL_SCRIPT: &str = r#"
+    const generateForm = document.getElementById('generate-invite-form');
+    const modal = document.getElementById('invite-modal');
+    const modalContent = document.getElementById('invite-modal-content');
+    const modalClose = document.getElementById('invite-modal-close');
+
+    generateForm.addEventListener('submit', function (event) {
+        event.preventDefault();
+        fetch(generateForm.action, {
+            method: 'POST',
+            body: new URLSearchParams(new FormData(generateForm)),
+        })
+            .then(function (response) { return response.text(); })
+            .then(function (html) {
+                modalContent.innerHTML = html;
+                modal.showModal();
+            })
+            .catch(function () {
+                modalContent.innerHTML = '<section class="admin-card"><h1>Unable to generate invitation</h1><p>A network error occurred. Try again.</p></section>';
+                modal.showModal();
+            });
+    });
+
+    modalClose.addEventListener('click', function () {
+        modal.close();
+    });
+
+    modal.addEventListener('close', function () {
+        window.location.reload();
     });
 "#;
 
@@ -206,14 +454,245 @@ async fn health(cx: &Cx) -> Result<impl View> {
     })
 }
 
-#[page("/invite")]
-async fn invite(cx: &Cx) -> Result<impl View> {
-    let query = query_params::<InviteQuery>(cx)?;
-    let code = query.code.clone().unwrap_or_default();
+#[page("/admin")]
+async fn admin(cx: &Cx) -> Result<impl View> {
     let state: &AppState = app_context(cx);
     let theme_class = state.config.appearance.default_theme.css_class();
+    let expiration_hours = state.config.invites.expiration_hours;
+    let now = Utc::now();
+    let invites = state.invites.list_recent(20).await.unwrap_or_default();
 
     Ok(view! {
+        <!DOCTYPE html>
+        <html lang="en">
+            <head>
+                <meta charset="utf-8" />
+                <meta name="viewport" content="width=device-width, initial-scale=1" />
+                <title>"Admin | Rust Invite System"</title>
+                <style>(ADMIN_CSS)</style>
+            </head>
+            <body class=(theme_class)>
+                <main class="admin-shell">
+                    <header class="admin-header">
+                        <div class="admin-header-row">
+                            <div>
+                                <p class="eyebrow">"Rust Invite System / Admin"</p>
+                                <h1>"Invite dashboard"</h1>
+                            </div>
+                            <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Toggle color theme">
+                                <img class="theme-icon theme-icon-light" src=(THEME_LIGHT_ICON) alt="" aria-hidden="true" />
+                                <img class="theme-icon theme-icon-dark" src=(THEME_DARK_ICON) alt="" aria-hidden="true" />
+                                <span class="theme-label">"Toggle theme"</span>
+                            </button>
+                        </div>
+                        <p class="intro">"Create one-time invitation links and assign the directory groups new accounts should receive."</p>
+                    </header>
+                    <div class="admin-grid">
+                        <section class="admin-card" aria-labelledby="generate-title">
+                            <h2 id="generate-title">"Generate an invitation"</h2>
+                            <p>"The generated link will be available after the invite service validates and stores these settings."</p>
+                            <form id="generate-invite-form" action="/admin/invites/generate" method="post">
+                                <label>
+                                    "Directory groups"
+                                    <input type="text" name="groups" placeholder="developers, vpn-users" autocomplete="off" required=(true) />
+                                </label>
+                                <label>
+                                    "Expires after"
+                                    <input type="number" name="expiration_hours" min="1" value=(expiration_hours) required=(true) />
+                                </label>
+                                <button type="submit">"Generate invite link"</button>
+                            </form>
+                        </section>
+                        <aside class="admin-card" aria-labelledby="status-title">
+                            <h2 id="status-title">"Service status"</h2>
+                            <p>"Invite storage is connected and ready for generation."</p>
+                            <div class="stat">
+                                <strong>(expiration_hours) "h"</strong>
+                                <span>"Configured default expiration"</span>
+                            </div>
+                            <div class="stat">
+                                <strong>"Protected"</strong>
+                                <span>"Admin access is expected to be enforced by the reverse proxy."</span>
+                            </div>
+                        </aside>
+                    </div>
+                    <section class="admin-card history-card" aria-labelledby="history-title">
+                        <h2 id="history-title">"Invite history"</h2>
+                        <p>"The most recent invitations, newest first."</p>
+                        if invites.is_empty() {
+                            <p>"No invitations have been generated yet."</p>
+                        } else {
+                            <table class="history-table">
+                                <thead>
+                                    <tr>
+                                        <th>"Groups"</th>
+                                        <th>"Hash"</th>
+                                        <th>"Created"</th>
+                                        <th>"Expires"</th>
+                                        <th>"Status"</th>
+                                        <th>"Action"</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for record in &invites {
+                                        <tr>
+                                            <td>(serde_json::from_str::<Vec<String>>(&record.groups_json).unwrap_or_default().join(", "))</td>
+                                            <td class="hash-cell" title=(record.token_hash.clone())>(record.token_hash.get(..12).unwrap_or(&record.token_hash)) "…"</td>
+                                            <td>(record.created_at.clone())</td>
+                                            <td>(record.expires_at.clone())</td>
+                                            <td>
+                                                if invite_status(record, now) == "Active" {
+                                                    <span class="status-badge status-active">"Active"</span>
+                                                } else if invite_status(record, now) == "Used" {
+                                                    <span class="status-badge status-used">"Used"</span>
+                                                } else if invite_status(record, now) == "Expired" {
+                                                    <span class="status-badge status-expired">"Expired"</span>
+                                                } else {
+                                                    <span class="status-badge status-revoked">"Revoked"</span>
+                                                }
+                                            </td>
+                                            <td>
+                                                if invite_status(record, now) == "Active" {
+                                                    <form class="revoke-form" action="/admin/invites/revoke" method="post">
+                                                        <input type="hidden" name="id" value=(record.id.clone()) />
+                                                        <button class="revoke-button" type="submit">"Disable"</button>
+                                                    </form>
+                                                } else {
+                                                    "—"
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                    </section>
+                </main>
+                <dialog id="invite-modal">
+                    <div id="invite-modal-content"></div>
+                    <button class="revoke-button" type="button" id="invite-modal-close">"Close"</button>
+                </dialog>
+                <script>(THEME_SCRIPT)</script>
+                <script>(ADMIN_MODAL_SCRIPT)</script>
+            </body>
+        </html>
+    })
+}
+
+#[route(POST "/admin/invites/revoke")]
+async fn revoke_invite_route(cx: &Cx, Form(form): Form<RevokeInviteForm>) -> Result<SeeOther> {
+    let state: &AppState = app_context(cx);
+    let _ = state
+        .invites
+        .revoke_invite(&form.id, &Utc::now().to_rfc3339())
+        .await;
+
+    Ok(see_other("/admin"))
+}
+
+#[page(POST "/admin/invites/generate")]
+async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Result<impl View> {
+    let groups: Vec<String> = form
+        .groups
+        .split(',')
+        .map(str::trim)
+        .filter(|group| !group.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+
+    let (message, invite_url, groups_text) = if groups.is_empty() {
+        (
+            String::from("Enter at least one directory group."),
+            None,
+            None,
+        )
+    } else if form.expiration_hours < 1 {
+        (
+            String::from("Expiration must be at least one hour."),
+            None,
+            None,
+        )
+    } else {
+        let rng = rand::rng();
+        let token: String = rng
+            .sample_iter(&Alphanumeric)
+            .take(32)
+            .map(char::from)
+            .collect();
+        let now = Utc::now();
+        let expires_at = now + Duration::hours(form.expiration_hours);
+        let repository = &app_context::<AppState>(cx).invites;
+        let invite_url = format!("/invite?code={token}");
+
+        if let Err(_) = repository
+            .create_invite(
+                &Uuid::new_v4().to_string(),
+                &hash_token(&token),
+                &serde_json::to_string(&groups).expect("groups should serialize"),
+                &now.to_rfc3339(),
+                &expires_at.to_rfc3339(),
+                None,
+            )
+            .await
+        {
+            (
+                String::from("The invitation could not be stored. Try again."),
+                None,
+                None,
+            )
+        } else {
+            (
+                format!(
+                    "This link expires in {} hours and can be used once.",
+                    form.expiration_hours
+                ),
+                Some(invite_url),
+                Some(groups.join(", ")),
+            )
+        }
+    };
+
+    Ok(view! {
+        <section class="admin-card">
+            <p class="eyebrow">"Invitation ready"</p>
+            <h1>"Share this invite link"</h1>
+            <p>(message)</p>
+            if let Some(invite_url) = invite_url {
+                <label>
+                    "Invite URL"
+                    <input type="text" readonly=(true) value=(invite_url) />
+                </label>
+            }
+            if let Some(groups) = groups_text {
+                <p>"Groups: " (groups)</p>
+            }
+        </section>
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct SubmitInviteForm {
+    code: String,
+    username: String,
+    email: String,
+    first_name: String,
+    last_name: String,
+    password: String,
+}
+
+fn invite_form_view(
+    cx: &Cx,
+    theme_class: String,
+    code: String,
+    username: String,
+    email: String,
+    first_name: String,
+    last_name: String,
+    errors: Vec<String>,
+    success_message: Option<String>,
+) -> Result<impl View> {
+    Ok(view! {
+        cx =>
         <!DOCTYPE html>
         <html lang="en">
             <head>
@@ -237,24 +716,34 @@ async fn invite(cx: &Cx) -> Result<impl View> {
                             </button>
                         </div>
                         <p class="intro">"Complete the form below to activate your account."</p>
+                        if !errors.is_empty() {
+                            <ul class="form-errors">
+                                for message in &errors {
+                                    <li>(message.clone())</li>
+                                }
+                            </ul>
+                        }
+                        if let Some(success_message) = success_message {
+                            <p class="form-success">(success_message)</p>
+                        }
                         <form action="/invite/submit" method="post">
                             <input type="hidden" name="code" value=(code) />
                             <label>
                                 "Username"
-                                <input type="text" name="username" autocomplete="username" required=(true) />
+                                <input type="text" name="username" autocomplete="username" value=(username) required=(true) />
                             </label>
                             <label>
                                 "Email"
-                                <input type="email" name="email" autocomplete="email" required=(true) />
+                                <input type="email" name="email" autocomplete="email" value=(email) required=(true) />
                             </label>
                             <div class="field-row">
                                 <label>
                                     "First name"
-                                    <input type="text" name="first_name" autocomplete="given-name" required=(true) />
+                                    <input type="text" name="first_name" autocomplete="given-name" value=(first_name) required=(true) />
                                 </label>
                                 <label>
                                     "Last name"
-                                    <input type="text" name="last_name" autocomplete="family-name" required=(true) />
+                                    <input type="text" name="last_name" autocomplete="family-name" value=(last_name) required=(true) />
                                 </label>
                             </div>
                             <label>
@@ -270,4 +759,69 @@ async fn invite(cx: &Cx) -> Result<impl View> {
             </body>
         </html>
     })
+}
+
+#[page("/invite")]
+async fn invite(cx: &Cx) -> Result<impl View> {
+    let query = query_params::<InviteQuery>(cx)?;
+    let code = query.code.clone().unwrap_or_default();
+    let state: &AppState = app_context(cx);
+    let theme_class = state.config.appearance.default_theme.css_class().to_owned();
+
+    invite_form_view(
+        cx,
+        theme_class,
+        code,
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        Vec::new(),
+        None,
+    )
+}
+
+#[page(POST "/invite/submit")]
+async fn submit_invite(cx: &Cx, Form(form): Form<SubmitInviteForm>) -> Result<impl View> {
+    let state: &AppState = app_context(cx);
+    let theme_class = state.config.appearance.default_theme.css_class().to_owned();
+
+    let mut errors = Vec::new();
+    if let Err(message) = validate_username(&form.username) {
+        errors.push(message);
+    }
+    if let Err(message) = validate_email(&form.email) {
+        errors.push(message);
+    }
+    if let Err(message) = validate_password(&form.password, &state.config.password_policy) {
+        errors.push(message);
+    }
+
+    if !errors.is_empty() {
+        return invite_form_view(
+            cx,
+            theme_class,
+            form.code,
+            form.username,
+            form.email,
+            form.first_name,
+            form.last_name,
+            errors,
+            None,
+        );
+    }
+
+    invite_form_view(
+        cx,
+        theme_class,
+        form.code,
+        form.username,
+        form.email,
+        form.first_name,
+        form.last_name,
+        Vec::new(),
+        Some(String::from(
+            "Your username, email, and password meet the requirements.",
+        )),
+    )
 }

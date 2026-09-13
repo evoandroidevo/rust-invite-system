@@ -3,6 +3,8 @@ use std::path::Path;
 use config::{Config, Environment, File, FileFormat};
 use serde::Deserialize;
 
+use crate::validation::PasswordPolicy;
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -15,6 +17,8 @@ pub struct AppConfig {
     pub invites: InviteConfig,
     #[serde(default)]
     pub appearance: AppearanceConfig,
+    #[serde(default)]
+    pub password_policy: PasswordPolicy,
 }
 
 #[derive(Clone, Debug, Deserialize)]

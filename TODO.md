@@ -20,13 +20,13 @@ Foundation decisions:
 ## 2. Establish the application structure
 
 - [x] Create modules for configuration, application state, routes, invite storage, LLDAP provisioning, validation, and views.
-- [ ] Add structured application errors and user-safe error responses.
+- [x] Add structured application errors and user-safe error responses.
 - [ ] Add graceful startup and shutdown handling.
 - [x] Add a health-check endpoint.
 
 ## 3. Configuration and secrets
 
-- [ ] Define typed configuration for server, database, LLDAP, invite expiry, and password policy.
+- [x] Define typed configuration for server, database, LLDAP, invite expiry, and password policy.
 - [x] Load non-secret defaults from an optional local TOML configuration file.
 - [x] Support `APP__` environment-variable overrides for deployment.
 - [ ] Keep LDAP bind passwords and other secrets out of committed files.
@@ -36,22 +36,23 @@ Foundation decisions:
 
 - [x] Add SQLite and migration support.
 - [x] Create invite and invite-event tables with a hashed invite token, groups, creation time, expiry time, and consumption state.
-- [ ] Generate cryptographically secure invite tokens.
-- [ ] Store only a hash of each invite token when practical.
-- [ ] Validate expiry and one-time use.
+- [x] Generate cryptographically secure invite tokens.
+- [x] Store only a hash of each invite token when practical.
+- [x] Validate expiry and one-time use.
 - [x] Consume an invite atomically after successful account provisioning.
-- [ ] Add cleanup for expired invites.
+- [x] Add cleanup for expired/revoked invites older than 120 days (background task, runs daily).
 
 ## 5. User invite flow
 
-- [ ] Build the admin form for selecting groups and generating an invite.
-- [ ] Return a complete invite URL to the administrator.
+- [x] Build the initial admin form for selecting groups and expiration.
+- [x] Return a complete invite URL to the administrator.
+- [x] View invite history in the admin dashboard, with the ability to disable (revoke) active invites.
 - [x] Build `/invite?code=...` with username, email, first name, last name, and password fields.
 - [ ] Preserve the invite token through form submission without trusting hidden fields alone.
 - [ ] Validate the invite before provisioning.
 - [ ] Validate username and email format and uniqueness.
-- [ ] Validate the configured password policy.
-- [ ] Return clear success and failure views.
+- [x] Validate the configured password policy.
+- [x] Return clear success and failure views.
 
 ## 6. LLDAP provisioning
 
@@ -75,7 +76,7 @@ Foundation decisions:
 
 ## 8. Tests and verification
 
-- [ ] Unit-test token generation, hashing, expiry, password policy, and email validation.
+- [x] Unit-test token generation, hashing, expiry, password policy, and email validation.
 - [ ] Test atomic invite consumption under concurrent requests.
 - [ ] Add route tests for valid, expired, used, and invalid invites.
 - [ ] Add an LLDAP user-provisioning integration test or mock client.

@@ -1,6 +1,9 @@
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 
+/// How long expired or revoked invites are kept before `cleanup_stale` removes them.
+pub const STALE_INVITE_RETENTION_DAYS: i64 = 120;
+
 pub fn hash_token(token: &str) -> String {
     format!("{:x}", Sha256::digest(token.as_bytes()))
 }
@@ -158,6 +161,88 @@ impl InviteRepository {
         .fetch_all(&self.pool)
         .await
     }
+
+    pub async fn list_recent(&self, limit: i64) -> Result<Vec<InviteRecord>, sqlx::Error> {
+        sqlx::query_as::<_, InviteRecord>(
+            "SELECT id, token_hash, groups_json, created_at, expires_at,
+					consumed_at, consumed_by, revoked_at
+			 FROM invites ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    pub async fn revoke_invite(&self, id: &str, revoked_at: &str) -> Result<bool, sqlx::Error> {
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let invite = sqlx::query_as::<_, InviteRecord>(
+            "SELECT id, token_hash, groups_json, created_at, expires_at,
+					consumed_at, consumed_by, revoked_at
+			 FROM invites
+			 WHERE id = ?
+			   AND consumed_at IS NULL
+			   AND revoked_at IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(&mut *transaction)
+        .await?;
+
+        let Some(invite) = invite else {
+            transaction.rollback().await?;
+            return Ok(false);
+        };
+
+        sqlx::query("UPDATE invites SET revoked_at = ? WHERE id = ?")
+            .bind(revoked_at)
+            .bind(&invite.id)
+            .execute(&mut *transaction)
+            .await?;
+
+        insert_event(
+            &mut transaction,
+            &invite.id,
+            "revoked",
+            revoked_at,
+            None,
+            None,
+        )
+        .await?;
+
+        transaction.commit().await?;
+        Ok(true)
+    }
+
+    /// Deletes expired or revoked invites (and their history) whose
+    /// `expires_at`/`revoked_at` is older than `cutoff`. Active and consumed
+    /// invites are left untouched. Returns the number of invites removed.
+    pub async fn cleanup_stale(&self, cutoff: &str) -> Result<u64, sqlx::Error> {
+        let mut transaction = self.pool.begin().await?;
+
+        sqlx::query(
+            "DELETE FROM invite_events WHERE invite_id IN (
+				SELECT id FROM invites
+				WHERE (revoked_at IS NOT NULL AND revoked_at < ?)
+				   OR (consumed_at IS NULL AND revoked_at IS NULL AND expires_at < ?)
+			 )",
+        )
+        .bind(cutoff)
+        .bind(cutoff)
+        .execute(&mut *transaction)
+        .await?;
+
+        let result = sqlx::query(
+            "DELETE FROM invites
+			 WHERE (revoked_at IS NOT NULL AND revoked_at < ?)
+			    OR (consumed_at IS NULL AND revoked_at IS NULL AND expires_at < ?)",
+        )
+        .bind(cutoff)
+        .bind(cutoff)
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+        Ok(result.rows_affected())
+    }
 }
 
 async fn insert_event(
@@ -233,5 +318,176 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].event_type, "created");
         assert_eq!(history[1].event_type, "consumed");
+    }
+
+    #[tokio::test]
+    async fn revokes_an_invite_once_and_excludes_it_from_consumption() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory database should connect");
+        let repository = InviteRepository::new(pool);
+        repository.migrate().await.expect("migration should run");
+
+        repository
+            .create_invite(
+                "invite-2",
+                "hash-2",
+                "[\"developers\"]",
+                "2026-09-12T10:00:00Z",
+                "2026-09-14T10:00:00Z",
+                Some("admin"),
+            )
+            .await
+            .expect("invite should be created");
+
+        assert!(
+            repository
+                .revoke_invite("invite-2", "2026-09-12T10:30:00Z")
+                .await
+                .expect("invite should be revoked")
+        );
+        assert!(
+            !repository
+                .revoke_invite("invite-2", "2026-09-12T10:45:00Z")
+                .await
+                .expect("second revoke should be rejected")
+        );
+        assert!(
+            !repository
+                .consume_invite("hash-2", "2026-09-12T11:00:00Z", "new-user")
+                .await
+                .expect("consume should be rejected for a revoked invite")
+        );
+
+        let history = repository
+            .history("invite-2")
+            .await
+            .expect("history should be readable");
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].event_type, "created");
+        assert_eq!(history[1].event_type, "revoked");
+
+        let recent = repository
+            .list_recent(10)
+            .await
+            .expect("recent invites should be listable");
+        assert!(recent.iter().any(|invite| invite.id == "invite-2"));
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_only_stale_expired_and_revoked_invites() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("in-memory database should connect");
+        let repository = InviteRepository::new(pool);
+        repository.migrate().await.expect("migration should run");
+
+        // Revoked long ago: should be cleaned up.
+        repository
+            .create_invite(
+                "stale-revoked",
+                "hash-stale-revoked",
+                "[\"developers\"]",
+                "2026-01-01T00:00:00Z",
+                "2026-01-03T00:00:00Z",
+                None,
+            )
+            .await
+            .expect("invite should be created");
+        repository
+            .revoke_invite("stale-revoked", "2026-01-02T00:00:00Z")
+            .await
+            .expect("invite should be revoked");
+
+        // Expired long ago, never consumed or revoked: should be cleaned up.
+        repository
+            .create_invite(
+                "stale-expired",
+                "hash-stale-expired",
+                "[\"developers\"]",
+                "2026-01-01T00:00:00Z",
+                "2026-01-03T00:00:00Z",
+                None,
+            )
+            .await
+            .expect("invite should be created");
+
+        // Revoked recently: must be kept.
+        repository
+            .create_invite(
+                "recent-revoked",
+                "hash-recent-revoked",
+                "[\"developers\"]",
+                "2026-09-01T00:00:00Z",
+                "2026-09-03T00:00:00Z",
+                None,
+            )
+            .await
+            .expect("invite should be created");
+        repository
+            .revoke_invite("recent-revoked", "2026-09-02T00:00:00Z")
+            .await
+            .expect("invite should be revoked");
+
+        // Consumed long ago: must be kept, cleanup only targets expired/revoked.
+        repository
+            .create_invite(
+                "stale-consumed",
+                "hash-stale-consumed",
+                "[\"developers\"]",
+                "2026-01-01T00:00:00Z",
+                "2026-01-03T00:00:00Z",
+                None,
+            )
+            .await
+            .expect("invite should be created");
+        repository
+            .consume_invite("hash-stale-consumed", "2026-01-02T00:00:00Z", "new-user")
+            .await
+            .expect("invite should be consumed");
+
+        // Still active: must be kept.
+        repository
+            .create_invite(
+                "active",
+                "hash-active",
+                "[\"developers\"]",
+                "2026-09-01T00:00:00Z",
+                "2027-09-01T00:00:00Z",
+                None,
+            )
+            .await
+            .expect("invite should be created");
+
+        let removed = repository
+            .cleanup_stale("2026-05-01T00:00:00Z")
+            .await
+            .expect("cleanup should run");
+        assert_eq!(removed, 2);
+
+        let remaining_ids: Vec<String> = repository
+            .list_recent(10)
+            .await
+            .expect("recent invites should be listable")
+            .into_iter()
+            .map(|invite| invite.id)
+            .collect();
+        assert!(!remaining_ids.contains(&"stale-revoked".to_owned()));
+        assert!(!remaining_ids.contains(&"stale-expired".to_owned()));
+        assert!(remaining_ids.contains(&"recent-revoked".to_owned()));
+        assert!(remaining_ids.contains(&"stale-consumed".to_owned()));
+        assert!(remaining_ids.contains(&"active".to_owned()));
+
+        assert!(
+            repository
+                .history("stale-revoked")
+                .await
+                .expect("history should be readable")
+                .is_empty()
+        );
     }
 }
