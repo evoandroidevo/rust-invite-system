@@ -131,14 +131,26 @@ impl RequestLog {
 
     fn emit_json(&self, level: &str, message: &str, duration_ms: Option<u128>) {
         let mut fields = Map::new();
-        fields.insert(String::from("ts"), Value::from(chrono::Utc::now().to_rfc3339()));
+        fields.insert(
+            String::from("ts"),
+            Value::from(chrono::Utc::now().to_rfc3339()),
+        );
         fields.insert(String::from("level"), Value::from(level));
         fields.insert(self.message_field.clone(), Value::from(message));
         fields.insert(String::from("method"), Value::from(self.method.clone()));
         fields.insert(String::from("path"), Value::from(self.path.clone()));
-        fields.insert(String::from("client_ip"), Value::from(self.client_ip.clone()));
-        fields.insert(String::from("forwarded_for"), Value::from(self.forwarded_for.clone()));
-        fields.insert(String::from("user_agent"), Value::from(self.user_agent.clone()));
+        fields.insert(
+            String::from("client_ip"),
+            Value::from(self.client_ip.clone()),
+        );
+        fields.insert(
+            String::from("forwarded_for"),
+            Value::from(self.forwarded_for.clone()),
+        );
+        fields.insert(
+            String::from("user_agent"),
+            Value::from(self.user_agent.clone()),
+        );
         fields.insert(String::from("referer"), Value::from(self.referer.clone()));
 
         if let Some(duration_ms) = duration_ms {
