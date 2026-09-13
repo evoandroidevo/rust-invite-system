@@ -1,0 +1,9 @@
+{
+  "id": "carol",
+  "email": "carol@example.com",
+  "password": "CarolDemo-123!",
+  "displayName": "Carol Example",
+  "firstName": "Carol",
+  "lastName": "Example",
+  "groups": ["engineering", "support"]
+}

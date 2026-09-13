@@ -1,7 +1,8 @@
 use std::{env, time::Duration};
 
 use ldap3::{LdapConnAsync, exop::PasswordModify};
-use serde::{Deserialize, Serialize};
+use rust_invite_system::{configuration::LldapConfig, lldap::LldapClient};
+use serde::Deserialize;
 use testcontainers::{
     GenericImage, ImageExt,
     core::{IntoContainerPort, WaitFor},
@@ -10,22 +11,6 @@ use testcontainers::{
 
 const HTTP_PORT: u16 = 17170;
 const LDAP_PORT: u16 = 3890;
-
-#[derive(Deserialize)]
-struct LoginResponse {
-    token: String,
-}
-
-#[derive(Deserialize)]
-struct GraphqlResponse<T> {
-    data: Option<T>,
-    errors: Option<Vec<GraphqlError>>,
-}
-
-#[derive(Deserialize)]
-struct GraphqlError {
-    message: String,
-}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,12 +25,6 @@ struct CreatedUser {
 struct CreateUserData {
     #[serde(rename = "createUser")]
     create_user: CreatedUser,
-}
-
-#[derive(Serialize)]
-struct GraphqlRequest<'a> {
-    query: &'a str,
-    variables: serde_json::Value,
 }
 
 #[tokio::test]
@@ -125,47 +104,46 @@ async fn latest_lldap_can_create_user_and_set_password() {
         .get_host_port_ipv4(LDAP_PORT.tcp())
         .await
         .expect("LLDAP LDAP port was not mapped");
-    let client = reqwest::Client::new();
     let base_url = format!("http://127.0.0.1:{http_port}");
     let test_user_dn = format!("uid={test_user},ou=people,{base_dn}");
 
-    let login = client
-        .post(format!("{base_url}/auth/simple/login"))
-        .json(&serde_json::json!({
-            "username": user_dn,
-            "password": user_password,
-        }))
-        .send()
+    let lldap = LldapClient::new(LldapConfig {
+        http_url: base_url.clone(),
+        ldap_url: format!("ldap://127.0.0.1:{ldap_port}"),
+        use_tls: false,
+        tls_insecure_skip_verify: false,
+        tls_ca_file: None,
+        base_dn: base_dn.clone(),
+        username: user_dn.clone(),
+        password: user_password.clone(),
+    });
+
+    let login = lldap
+        .login(&user_dn, &user_password)
         .await
-        .expect("LLDAP login request failed")
-        .error_for_status()
-        .expect("LLDAP login was rejected")
-        .json::<LoginResponse>()
-        .await
-        .expect("LLDAP login response was invalid");
+        .expect("LLDAP login request failed");
 
     let create_query = r#"
         mutation CreateUser($user: CreateUserInput!) {
             createUser(user: $user) { id email firstName lastName }
         }
     "#;
-    let created = graphql::<CreateUserData>(
-        &client,
-        &base_url,
-        &login.token,
-        create_query,
-        serde_json::json!({
-            "user": {
-                "id": test_user,
-                "email": "invite-test@example.com",
-                "firstName": "Invite",
-                "lastName": "Test",
-                "displayName": "Invite Test"
-            }
-        }),
-    )
-    .await
-    .expect("LLDAP createUser mutation failed");
+    let created = lldap
+        .graphql::<CreateUserData>(
+            &login,
+            create_query,
+            serde_json::json!({
+                "user": {
+                    "id": test_user,
+                    "email": "invite-test@example.com",
+                    "firstName": "Invite",
+                    "lastName": "Test",
+                    "displayName": "Invite Test"
+                }
+            }),
+        )
+        .await
+        .expect("LLDAP createUser mutation failed");
     assert_eq!(created.create_user.id, test_user);
     assert_eq!(created.create_user.email, "invite-test@example.com");
     assert_eq!(created.create_user.first_name, "Invite");
@@ -195,48 +173,8 @@ async fn latest_lldap_can_create_user_and_set_password() {
     let delete_query = r#"
         mutation DeleteUser($id: String!) { deleteUser(userId: $id) { ok } }
     "#;
-    graphql::<serde_json::Value>(
-        &client,
-        &base_url,
-        &login.token,
-        delete_query,
-        serde_json::json!({ "id": test_user }),
-    )
-    .await
-    .expect("LLDAP deleteUser mutation failed");
-}
-
-async fn graphql<T: for<'de> Deserialize<'de>>(
-    client: &reqwest::Client,
-    base_url: &str,
-    token: &str,
-    query: &str,
-    variables: serde_json::Value,
-) -> Result<T, String> {
-    let response = client
-        .post(format!("{base_url}/api/graphql"))
-        .bearer_auth(token)
-        .json(&GraphqlRequest { query, variables })
-        .send()
+    lldap
+        .graphql::<serde_json::Value>(&login, delete_query, serde_json::json!({ "id": test_user }))
         .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let body = response.text().await.map_err(|error| error.to_string())?;
-    if !status.is_success() {
-        return Err(format!("GraphQL request returned {status}: {body}"));
-    }
-    let response = serde_json::from_str::<GraphqlResponse<T>>(&body)
-        .map_err(|error| format!("GraphQL response decoding failed: {error}; body: {body}"))?;
-
-    if let Some(errors) = response.errors {
-        return Err(errors
-            .into_iter()
-            .map(|error| error.message)
-            .collect::<Vec<_>>()
-            .join("; "));
-    }
-
-    response
-        .data
-        .ok_or_else(|| "GraphQL response had no data".to_owned())
+        .expect("LLDAP deleteUser mutation failed");
 }

@@ -1,11 +1,3 @@
-mod app_state;
-mod configuration;
-mod invite_storage;
-mod lldap;
-mod routes;
-mod validation;
-mod views;
-
 use std::path::PathBuf;
 use std::time::Duration as StdDuration;
 
@@ -15,8 +7,8 @@ use topcoat::{
     router::{Router, RouterBuilderDiscoverExt},
 };
 
-use crate::invite_storage::STALE_INVITE_RETENTION_DAYS;
-use crate::{app_state::AppState, configuration::AppConfig};
+use rust_invite_system::invite_storage::STALE_INVITE_RETENTION_DAYS;
+use rust_invite_system::{app_state::AppState, configuration::AppConfig};
 
 fn sync_assets() -> Result<(), Box<dyn std::error::Error>> {
     let executable = std::env::current_exe()?;
@@ -33,14 +25,15 @@ fn sync_assets() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Periodically deletes expired/revoked invites older than the retention window.
-fn spawn_invite_cleanup_task(invites: crate::invite_storage::InviteRepository) {
+fn spawn_invite_cleanup_task(invites: rust_invite_system::invite_storage::InviteRepository) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(StdDuration::from_secs(24 * 60 * 60));
         loop {
             interval.tick().await;
             let cutoff = Utc::now() - Duration::days(STALE_INVITE_RETENTION_DAYS);
             if let Err(error) = invites.cleanup_stale(&cutoff.to_rfc3339()).await {
-                eprintln!("invite cleanup failed: {error}");
+                let _ = error;
+                eprintln!("invite cleanup failed");
             }
         }
     });

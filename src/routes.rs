@@ -16,11 +16,17 @@ use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::invite_storage::{InviteRecord, hash_token};
+use crate::lldap::LldapError;
 use crate::validation::{validate_email, validate_password, validate_username};
 use crate::views;
 
 #[query_params(error = bad_request)]
 struct InviteQuery {
+    code: Option<String>,
+}
+
+#[query_params(error = bad_request)]
+struct SubmitInviteQuery {
     code: Option<String>,
 }
 
@@ -40,15 +46,22 @@ fn invite_status(record: &InviteRecord, now: DateTime<Utc>) -> &'static str {
         "Revoked"
     } else if record.consumed_at.is_some() {
         "Used"
-    } else if record
-        .expires_at
-        .parse::<DateTime<Utc>>()
-        .is_ok_and(|expires_at| expires_at <= now)
-    {
-        "Expired"
     } else {
-        "Active"
+        match record.expires_at.parse::<DateTime<Utc>>() {
+            Ok(expires_at) if expires_at <= now => "Expired",
+            Ok(_) => "Active",
+            Err(_) => "Invalid",
+        }
     }
+}
+
+fn invite_is_active(record: &InviteRecord, now: DateTime<Utc>) -> bool {
+    record.revoked_at.is_none()
+        && record.consumed_at.is_none()
+        && record
+            .expires_at
+            .parse::<DateTime<Utc>>()
+            .is_ok_and(|expires_at| expires_at > now)
 }
 
 const INVITE_CSS: &str = r#"
@@ -624,7 +637,7 @@ async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Resul
         let repository = &app_context::<AppState>(cx).invites;
         let invite_url = format!("/invite?code={token}");
 
-        if let Err(_) = repository
+        if repository
             .create_invite(
                 &Uuid::new_v4().to_string(),
                 &hash_token(&token),
@@ -634,6 +647,7 @@ async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Resul
                 None,
             )
             .await
+            .is_err()
         {
             (
                 String::from("The invitation could not be stored. Try again."),
@@ -672,7 +686,6 @@ async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Resul
 
 #[derive(Debug, Deserialize)]
 struct SubmitInviteForm {
-    code: String,
     username: String,
     email: String,
     first_name: String,
@@ -680,6 +693,7 @@ struct SubmitInviteForm {
     password: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn invite_form_view(
     cx: &Cx,
     theme_class: String,
@@ -726,8 +740,7 @@ fn invite_form_view(
                         if let Some(success_message) = success_message {
                             <p class="form-success">(success_message)</p>
                         }
-                        <form action="/invite/submit" method="post">
-                            <input type="hidden" name="code" value=(code) />
+                        <form action=(format!("/invite/submit?code={code}")) method="post">
                             <label>
                                 "Username"
                                 <input type="text" name="username" autocomplete="username" value=(username) required=(true) />
@@ -785,6 +798,23 @@ async fn invite(cx: &Cx) -> Result<impl View> {
 async fn submit_invite(cx: &Cx, Form(form): Form<SubmitInviteForm>) -> Result<impl View> {
     let state: &AppState = app_context(cx);
     let theme_class = state.config.appearance.default_theme.css_class().to_owned();
+    let query = query_params::<SubmitInviteQuery>(cx)?;
+    let code = match query.code.clone() {
+        Some(code) if !code.trim().is_empty() => code,
+        _ => {
+            return invite_form_view(
+                cx,
+                theme_class,
+                String::new(),
+                form.username,
+                form.email,
+                form.first_name,
+                form.last_name,
+                vec![String::from("This invitation link is missing its code.")],
+                None,
+            );
+        }
+    };
 
     let mut errors = Vec::new();
     if let Err(message) = validate_username(&form.username) {
@@ -801,7 +831,7 @@ async fn submit_invite(cx: &Cx, Form(form): Form<SubmitInviteForm>) -> Result<im
         return invite_form_view(
             cx,
             theme_class,
-            form.code,
+            code,
             form.username,
             form.email,
             form.first_name,
@@ -811,17 +841,247 @@ async fn submit_invite(cx: &Cx, Form(form): Form<SubmitInviteForm>) -> Result<im
         );
     }
 
+    if state
+        .lldap
+        .username_exists(&form.username)
+        .await
+        .unwrap_or(false)
+    {
+        return invite_form_view(
+            cx,
+            theme_class,
+            code,
+            form.username,
+            form.email,
+            form.first_name,
+            form.last_name,
+            vec![String::from("That username is already in use.")],
+            None,
+        );
+    }
+
+    if state.lldap.email_exists(&form.email).await.unwrap_or(false) {
+        return invite_form_view(
+            cx,
+            theme_class,
+            code,
+            form.username,
+            form.email,
+            form.first_name,
+            form.last_name,
+            vec![String::from("That email address is already in use.")],
+            None,
+        );
+    }
+
+    let token_hash = hash_token(&code);
+    let invite_record = match state.invites.find_by_token_hash(&token_hash).await {
+        Ok(Some(found_invite)) => found_invite,
+        _ => {
+            return invite_form_view(
+                cx,
+                theme_class,
+                code,
+                form.username,
+                form.email,
+                form.first_name,
+                form.last_name,
+                vec![String::from(
+                    "This invitation link is invalid or has expired.",
+                )],
+                None,
+            );
+        }
+    };
+
+    if !invite_is_active(&invite_record, Utc::now()) {
+        return invite_form_view(
+            cx,
+            theme_class,
+            code,
+            form.username,
+            form.email,
+            form.first_name,
+            form.last_name,
+            vec![String::from(
+                "This invitation link is invalid or has expired.",
+            )],
+            None,
+        );
+    }
+
+    let groups = match serde_json::from_str::<Vec<String>>(&invite_record.groups_json) {
+        Ok(groups) => groups,
+        Err(_) => {
+            return invite_form_view(
+                cx,
+                theme_class,
+                code,
+                form.username,
+                form.email,
+                form.first_name,
+                form.last_name,
+                vec![String::from("This invitation could not be processed.")],
+                None,
+            );
+        }
+    };
+
+    match state
+        .lldap
+        .provision_user(
+            &form.username,
+            &form.email,
+            &form.first_name,
+            &form.last_name,
+            &form.password,
+            &groups,
+        )
+        .await
+    {
+        Ok(()) => {}
+        Err(error) => {
+            let message = match error {
+                LldapError::Http(_) | LldapError::Json(_) => {
+                    String::from("The directory service could not be reached.")
+                }
+                LldapError::Graphql(_) => {
+                    String::from("The account could not be created in the directory.")
+                }
+            };
+            return invite_form_view(
+                cx,
+                theme_class,
+                code,
+                form.username,
+                form.email,
+                form.first_name,
+                form.last_name,
+                vec![message],
+                None,
+            );
+        }
+    }
+
+    if !state
+        .invites
+        .consume_invite(&token_hash, &Utc::now().to_rfc3339(), &form.username)
+        .await
+        .unwrap_or(false)
+    {
+        let _ = state.lldap.delete_user_account(&form.username).await;
+        return invite_form_view(
+            cx,
+            theme_class,
+            code,
+            form.username,
+            form.email,
+            form.first_name,
+            form.last_name,
+            vec![String::from(
+                "The invitation could not be marked as used. Please try again.",
+            )],
+            None,
+        );
+    }
+
     invite_form_view(
         cx,
         theme_class,
-        form.code,
-        form.username,
-        form.email,
-        form.first_name,
-        form.last_name,
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
+        String::new(),
         Vec::new(),
-        Some(String::from(
-            "Your username, email, and password meet the requirements.",
-        )),
+        Some(String::from("Your account has been created.")),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{TimeZone, Utc};
+
+    use super::{InviteRecord, invite_is_active, invite_status};
+
+    fn make_record(
+        expires_at: &str,
+        consumed_at: Option<&str>,
+        revoked_at: Option<&str>,
+    ) -> InviteRecord {
+        InviteRecord {
+            id: String::from("invite-1"),
+            token_hash: String::from("hash-1"),
+            groups_json: String::from("[\"engineering\"]"),
+            created_at: String::from("2026-09-12T10:00:00Z"),
+            expires_at: expires_at.to_owned(),
+            consumed_at: consumed_at.map(str::to_owned),
+            consumed_by: consumed_at.map(|_| String::from("new-user")),
+            revoked_at: revoked_at.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn invite_status_reports_all_states() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 9, 12, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+
+        assert_eq!(
+            invite_status(&make_record("2026-09-12T14:00:00Z", None, None), now,),
+            "Active"
+        );
+        assert_eq!(
+            invite_status(&make_record("2026-09-12T09:00:00Z", None, None), now,),
+            "Expired"
+        );
+        assert_eq!(
+            invite_status(
+                &make_record("2026-09-12T14:00:00Z", Some("2026-09-12T11:00:00Z"), None),
+                now,
+            ),
+            "Used"
+        );
+        assert_eq!(
+            invite_status(
+                &make_record("2026-09-12T14:00:00Z", None, Some("2026-09-12T11:00:00Z")),
+                now,
+            ),
+            "Revoked"
+        );
+        assert_eq!(
+            invite_status(&make_record("not-a-timestamp", None, None), now),
+            "Invalid"
+        );
+    }
+
+    #[test]
+    fn invite_is_active_rejects_used_expired_revoked_and_invalid_records() {
+        let now = Utc
+            .with_ymd_and_hms(2026, 9, 12, 12, 0, 0)
+            .single()
+            .expect("valid timestamp");
+
+        assert!(invite_is_active(
+            &make_record("2026-09-12T14:00:00Z", None, None),
+            now,
+        ));
+        assert!(!invite_is_active(
+            &make_record("2026-09-12T09:00:00Z", None, None),
+            now,
+        ));
+        assert!(!invite_is_active(
+            &make_record("2026-09-12T14:00:00Z", Some("2026-09-12T11:00:00Z"), None),
+            now,
+        ));
+        assert!(!invite_is_active(
+            &make_record("2026-09-12T14:00:00Z", None, Some("2026-09-12T11:00:00Z")),
+            now,
+        ));
+        assert!(!invite_is_active(
+            &make_record("not-a-timestamp", None, None),
+            now
+        ));
+    }
 }

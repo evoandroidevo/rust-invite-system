@@ -71,7 +71,11 @@ impl AppConfig {
 
         Config::builder()
             .add_source(File::new(&path, FileFormat::Toml).required(false))
-            .add_source(Environment::with_prefix("APP").separator("__"))
+            .add_source(
+                Environment::with_prefix("APP")
+                    .separator("__")
+                    .try_parsing(true),
+            )
             .build()?
             .try_deserialize()
     }
@@ -98,7 +102,12 @@ impl Default for ServerConfig {
 pub struct LldapConfig {
     pub http_url: String,
     pub ldap_url: String,
+    pub use_tls: bool,
+    pub tls_insecure_skip_verify: bool,
+    pub tls_ca_file: Option<String>,
     pub base_dn: String,
+    pub username: String,
+    pub password: String,
 }
 
 impl Default for LldapConfig {
@@ -106,7 +115,12 @@ impl Default for LldapConfig {
         Self {
             http_url: "http://127.0.0.1:17170".to_owned(),
             ldap_url: "ldap://127.0.0.1:3890".to_owned(),
+            use_tls: false,
+            tls_insecure_skip_verify: false,
+            tls_ca_file: None,
             base_dn: "dc=example,dc=com".to_owned(),
+            username: "admin".to_owned(),
+            password: "dev-only-password-change-me".to_owned(),
         }
     }
 }
@@ -128,14 +142,57 @@ impl Default for InviteConfig {
 #[cfg(test)]
 mod tests {
     use std::{
+        ffi::OsString,
         fs,
+        sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::AppConfig;
 
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        server_port: Option<OsString>,
+        ldap_http_url: Option<OsString>,
+    }
+
+    impl EnvGuard {
+        fn capture() -> Self {
+            Self {
+                server_port: std::env::var_os("APP__SERVER__PORT"),
+                ldap_http_url: std::env::var_os("APP__LDAP__HTTP_URL"),
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match self.server_port.take() {
+                    Some(value) => std::env::set_var("APP__SERVER__PORT", value),
+                    None => std::env::remove_var("APP__SERVER__PORT"),
+                }
+                match self.ldap_http_url.take() {
+                    Some(value) => std::env::set_var("APP__LDAP__HTTP_URL", value),
+                    None => std::env::remove_var("APP__LDAP__HTTP_URL"),
+                }
+            }
+        }
+    }
+
     #[test]
     fn loads_toml_values_over_defaults() {
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should be available");
+        let _env = EnvGuard::capture();
+        unsafe {
+            std::env::remove_var("APP__SERVER__PORT");
+            std::env::remove_var("APP__LDAP__HTTP_URL");
+        }
+
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time must be after the Unix epoch")
@@ -153,7 +210,43 @@ mod tests {
         assert_eq!(config.server.port, 9090);
         assert_eq!(config.invites.expiration_hours, 12);
         assert_eq!(config.ldap.ldap_url, "ldap://127.0.0.1:3890");
+        assert!(!config.ldap.use_tls);
+        assert!(!config.ldap.tls_insecure_skip_verify);
+        assert!(config.ldap.tls_ca_file.is_none());
+        assert_eq!(config.ldap.username, "admin");
         assert_eq!(config.appearance.default_theme.css_class(), "theme-dark");
+
+        fs::remove_file(path).expect("test config should be removable");
+    }
+
+    #[test]
+    fn environment_values_override_file_values() {
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock should be available");
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after the Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rust-invite-config-env-{suffix}.toml"));
+        fs::write(
+            &path,
+            "[server]\nhost = \"0.0.0.0\"\nport = 9090\n[ldap]\nhttp_url = \"http://file.example\"\nbase_dn = \"dc=file,dc=example\"\n",
+        )
+        .expect("test config should be writable");
+
+        let _env = EnvGuard::capture();
+
+        unsafe {
+            std::env::set_var("APP__SERVER__PORT", "7777");
+            std::env::set_var("APP__LDAP__HTTP_URL", "http://env.example");
+        }
+
+        let config = AppConfig::load(&path).expect("test config should parse");
+
+        assert_eq!(config.server.port, 7777);
+        assert_eq!(config.ldap.http_url, "http://env.example");
 
         fs::remove_file(path).expect("test config should be removable");
     }

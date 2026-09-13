@@ -270,19 +270,45 @@ async fn insert_event(
 
 #[cfg(test)]
 mod tests {
-    use sqlx::sqlite::SqlitePoolOptions;
+    use std::{
+        fs,
+        str::FromStr,
+        sync::Arc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use tokio::sync::Barrier;
 
     use super::InviteRepository;
 
-    #[tokio::test]
-    async fn creates_and_consumes_an_invite_once_with_history() {
+    fn test_database_url(name: &str) -> String {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after the Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("{name}-{suffix}.sqlite"));
+        path.to_string_lossy().into_owned()
+    }
+
+    async fn test_repository(name: &str) -> (InviteRepository, String) {
+        let database_path = test_database_url(name);
+        let options = SqliteConnectOptions::from_str(&format!("sqlite://{database_path}"))
+            .expect("database URL should parse")
+            .create_if_missing(true);
         let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+            .max_connections(5)
+            .connect_with(options)
             .await
-            .expect("in-memory database should connect");
+            .expect("database should connect");
         let repository = InviteRepository::new(pool);
         repository.migrate().await.expect("migration should run");
+        (repository, database_path)
+    }
+
+    #[tokio::test]
+    async fn creates_and_consumes_an_invite_once_with_history() {
+        let (repository, database_path) = test_repository("invite-storage-history").await;
 
         let invite = repository
             .create_invite(
@@ -318,17 +344,13 @@ mod tests {
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].event_type, "created");
         assert_eq!(history[1].event_type, "consumed");
+
+        let _ = fs::remove_file(database_path);
     }
 
     #[tokio::test]
     async fn revokes_an_invite_once_and_excludes_it_from_consumption() {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .expect("in-memory database should connect");
-        let repository = InviteRepository::new(pool);
-        repository.migrate().await.expect("migration should run");
+        let (repository, database_path) = test_repository("invite-storage-revoke").await;
 
         repository
             .create_invite(
@@ -374,6 +396,56 @@ mod tests {
             .await
             .expect("recent invites should be listable");
         assert!(recent.iter().any(|invite| invite.id == "invite-2"));
+
+        let _ = fs::remove_file(database_path);
+    }
+
+    #[tokio::test]
+    async fn consume_invite_is_atomic_under_concurrency() {
+        let (repository, database_path) = test_repository("invite-storage-concurrent").await;
+
+        repository
+            .create_invite(
+                "invite-3",
+                "hash-3",
+                "[\"developers\"]",
+                "2026-09-12T10:00:00Z",
+                "2026-09-14T10:00:00Z",
+                Some("admin"),
+            )
+            .await
+            .expect("invite should be created");
+
+        let barrier = Arc::new(Barrier::new(3));
+        let repo_a = repository.clone();
+        let repo_b = repository.clone();
+        let barrier_a = barrier.clone();
+        let barrier_b = barrier.clone();
+
+        let task_a = tokio::spawn(async move {
+            barrier_a.wait().await;
+            repo_a
+                .consume_invite("hash-3", "2026-09-12T11:00:00Z", "user-a")
+                .await
+                .expect("first consume attempt should complete")
+        });
+        let task_b = tokio::spawn(async move {
+            barrier_b.wait().await;
+            repo_b
+                .consume_invite("hash-3", "2026-09-12T11:00:00Z", "user-b")
+                .await
+                .expect("second consume attempt should complete")
+        });
+
+        barrier.wait().await;
+        let (result_a, result_b) = tokio::join!(task_a, task_b);
+        let results = [
+            result_a.expect("task A should not panic"),
+            result_b.expect("task B should not panic"),
+        ];
+        assert_eq!(results.iter().filter(|result| **result).count(), 1);
+
+        let _ = fs::remove_file(database_path);
     }
 
     #[tokio::test]

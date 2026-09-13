@@ -2,11 +2,13 @@ use std::str::FromStr;
 
 use crate::configuration::AppConfig;
 use crate::invite_storage::InviteRepository;
+use crate::lldap::LldapClient;
 
 #[derive(Clone, Debug)]
 pub struct AppState {
     pub config: AppConfig,
     pub invites: InviteRepository,
+    pub lldap: LldapClient,
 }
 
 impl AppState {
@@ -18,8 +20,13 @@ impl AppState {
             .connect_with(options)
             .await?;
         let invites = InviteRepository::new(pool);
+        let lldap = LldapClient::new(config.ldap.clone());
         invites.migrate().await?;
 
-        Ok(Self { config, invites })
+        Ok(Self {
+            config,
+            invites,
+            lldap,
+        })
     }
 }

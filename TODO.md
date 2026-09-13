@@ -21,7 +21,7 @@ Foundation decisions:
 
 - [x] Create modules for configuration, application state, routes, invite storage, LLDAP provisioning, validation, and views.
 - [x] Add structured application errors and user-safe error responses.
-- [ ] Add graceful startup and shutdown handling.
+- [x] Add graceful startup and shutdown handling.
 - [x] Add a health-check endpoint.
 
 ## 3. Configuration and secrets
@@ -48,41 +48,42 @@ Foundation decisions:
 - [x] Return a complete invite URL to the administrator.
 - [x] View invite history in the admin dashboard, with the ability to disable (revoke) active invites.
 - [x] Build `/invite?code=...` with username, email, first name, last name, and password fields.
-- [ ] Preserve the invite token through form submission without trusting hidden fields alone.
-- [ ] Validate the invite before provisioning.
-- [ ] Validate username and email format and uniqueness.
+- [x] Preserve the invite token through form submission without trusting hidden fields alone.
+- [x] Validate the invite before provisioning.
+- [x] Validate username and email format and uniqueness.
 - [x] Validate the configured password policy.
 - [x] Return clear success and failure views.
 
 ## 6. LLDAP provisioning
 
-- [ ] Implement a dedicated LLDAP client service.
-- [ ] Use a service account with the minimum required permissions.
-- [ ] Provision the user with the required attributes.
-- [ ] Assign the groups stored on the invite.
-- [ ] Use TLS or a private trusted network for LDAP traffic.
-- [ ] Avoid blocking synchronous LDAP calls on async request threads.
-- [ ] Define rollback behavior when provisioning succeeds but invite consumption fails.
-- [ ] Never log passwords, bind credentials, or complete invite tokens.
+- [x] Implement a dedicated LLDAP client service.
+- [x] Add LDAP TLS configuration with CA file and verify-skip support.
+- [x] Use a service account with the minimum required permissions.
+- [x] Provision the user with the required attributes.
+- [x] Assign the groups stored on the invite.
+- [x] Use TLS or a private trusted network for LDAP traffic.
+- [x] Avoid blocking synchronous LDAP calls on async request threads.
+- [x] Define rollback behavior when provisioning succeeds but invite consumption fails.
+- [x] Never log passwords, bind credentials, or complete invite tokens.
 
 ## 7. Admin protection and HTTP security
 
-- [ ] Keep admin authentication and TLS termination in the reverse proxy as planned.
-- [ ] Restrict admin routes so they are not publicly reachable through an unprotected path.
-- [ ] Validate forwarded headers and trusted proxy configuration.
+- [x] Keep admin authentication and TLS termination in the reverse proxy as planned.
+- [x] Restrict admin routes so they are not publicly reachable through an unprotected path.
+- [x] Validate forwarded headers and trusted proxy configuration.
 - [ ] Add CSRF protection for state-changing browser forms where required.
-- [ ] Add rate limiting for invite generation and registration attempts.
+- [x] Add rate limiting for invite generation and registration attempts.
 - [ ] Set secure cookies and security-related response headers.
 
 ## 8. Tests and verification
 
 - [x] Unit-test token generation, hashing, expiry, password policy, and email validation.
-- [ ] Test atomic invite consumption under concurrent requests.
-- [ ] Add route tests for valid, expired, used, and invalid invites.
-- [ ] Add an LLDAP user-provisioning integration test or mock client.
+- [x] Test atomic invite consumption under concurrent requests.
+- [x] Add route tests for valid, expired, used, and invalid invites.
+- [x] Add an LLDAP user-provisioning integration test or mock client.
 - [x] Add an opt-in LLDAP Docker smoke test using `lldap/lldap:latest` and `dev.env`.
-- [ ] Run `cargo fmt --check`, `cargo clippy`, and `cargo test` in CI.
-- [ ] Test configuration loading with file values and environment overrides.
+- [x] Run `cargo fmt --check`, `cargo clippy`, and `cargo test` in CI.
+- [x] Test configuration loading with file values and environment overrides.
 
 ## 9. Deployment
 
