@@ -18,6 +18,7 @@ use crate::app_state::AppState;
 use crate::invite_storage::{InviteRecord, hash_token};
 use crate::lldap::LldapError;
 use crate::validation::{validate_email, validate_password, validate_username};
+use crate::version::app_version;
 use crate::views;
 
 #[query_params(error = bad_request)]
@@ -451,6 +452,7 @@ async fn home() -> Result<impl View> {
             <body>
                 <h1>(views::page_title())</h1>
                 <p>"Invite service is starting."</p>
+                <p>"Version: " (app_version())</p>
             </body>
         </html>
     })
@@ -461,9 +463,7 @@ async fn health(cx: &Cx) -> Result<impl View> {
     let state: &AppState = app_context(cx);
 
     Ok(view! {
-        <p>
-            "ok (invite expiry: " (state.config.invites.expiration_hours) " hours)"
-        </p>
+        <p>"ok (version: " (app_version()) ", invite expiry: " (state.config.invites.expiration_hours) " hours)"</p>
     })
 }
 

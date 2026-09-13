@@ -8,6 +8,8 @@ The root [docker-compose.yml](../docker-compose.yml) starts the app on an intern
 
 The CI workflow publishes the built image to GitHub Container Registry as `ghcr.io/<owner>/<repo>` on pushes to `main` and version tags.
 
+Versioning follows SemVer from `Cargo.toml`. Release artifacts should be tagged `vX.Y.Z`, and the published image should receive the same version tag in GHCR.
+
 Required runtime inputs:
 
 - `APP_LDAP_HTTP_URL`

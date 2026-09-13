@@ -46,6 +46,14 @@ Reverse-proxy examples for Caddy and Nginx live in [docs/README.md](docs/README.
 
 The production container and compose deployment notes live in [docs/deployment.md](docs/deployment.md).
 
+## Versioning
+
+The application uses semantic versioning from `Cargo.toml` as the source of truth.
+
+- App version: `x.y.z` from `CARGO_PKG_VERSION`
+- Git release tags: `vX.Y.Z`
+- GHCR image tags: `vX.Y.Z`, `latest` on the default branch, and commit SHA tags from CI
+
 ## LLDAP smoke test
 
 The ignored Docker integration test starts `lldap/lldap:latest` with the values in `dev.env` and waits for its HTTP service.
