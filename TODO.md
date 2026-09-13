@@ -1,103 +1,310 @@
-# Project TODO
+# Safety and Best-Practices TODO
 
-## 1. Confirm the foundation
+Scope: rust-invite-system
+Review date: 2026-09-13
+Status: Seven-document codebase workflow completed; implementation remains proposed.
+Fresh verification on 2026-09-13: ordinary Cargo tests passed (21 passed,
+2 Docker smoke tests ignored); local compiler is Rust 1.98.1. Docker integration,
+deployment checks, and dependency scanning remain unverified.
 
-- [x] Initialize the Rust binary crate.
-- [x] Add Topcoat `0.8.0`.
-- [x] Verify the project with `cargo check`.
-- [x] Confirm the current Topcoat `0.8.0` routing, view, and server-start APIs with a compiling starter page.
-- [x] Choose LLDAP GraphQL as the provisioning path; reserve `ldap3` for directory queries and compatibility checks.
-- [x] Confirm the LLDAP user-creation and password-handling flow with a real integration test before writing provisioning code.
+Unchecked items include verification tasks, proposed designs, and regression
+requirements, not just confirmed defects. Passing tests do not establish that
+the deployment or complete redemption workflow is secure.
 
-Foundation decisions:
+## Codebase Documentation Progress
 
-- Topcoat `0.8.0` uses `topcoat::router::{page, Router, RouterBuilderDiscoverExt}` and `topcoat::view::{view, View}` for the starter route.
-- Topcoat query parameters are read through request context helpers, not the older `Query(...)` extractor shown in the imported chat.
-- Existing workspace deployments use LLDAP's LDAP listener on port `3890`; the invite service should use the LLDAP management API for writes so password handling follows LLDAP's supported path.
-- LDAP bind credentials, base DN, and API settings must be loaded from runtime configuration or secrets.
-- The local LLDAP smoke test uses `dev.env`, pulls `lldap/lldap:latest`, and is run explicitly with `cargo test --test lldap_smoke -- --ignored`.
+- [x] Phase 1: Run scan, read intent documents.
+- [x] Phase 2: Investigate each documentation area; mark unavailable evidence.
+- [x] Phase 3: Populate all seven documents in `docs/codebase/`.
+- [x] Phase 4: Validate required sections and evidence, present divergences,
+      and resolve the remaining group-policy question.
 
-## 2. Establish the application structure
+Current references: [stack](docs/codebase/STACK.md),
+[structure](docs/codebase/STRUCTURE.md),
+[architecture](docs/codebase/ARCHITECTURE.md),
+[conventions](docs/codebase/CONVENTIONS.md),
+[integrations](docs/codebase/INTEGRATIONS.md),
+[testing](docs/codebase/TESTING.md), and
+[concerns](docs/codebase/CONCERNS.md).
+The existing Phase 1 scan is preserved at `docs/.codebase-scan.txt`, ignored by
+Git, outside the seven-document directory. Documentation completion does not
+close the implementation or runtime verification tasks below.
 
-- [x] Create modules for configuration, application state, routes, invite storage, LLDAP provisioning, validation, and views.
-- [x] Add structured application errors and user-safe error responses.
-- [x] Add graceful startup and shutdown handling.
-- [x] Add a health-check endpoint.
+## Review Gaps and Decisions
 
-## 3. Configuration and secrets
+- Phase 2 intent review: `README.md`, `docs/README.md`, and
+  `docs/deployment.md` describe proxy-owned admin authentication, localhost or
+  internal-network app access, a non-root runtime container, and backup/recovery
+  procedures. These are documented safeguards, not yet runtime-verified findings.
+  The single built-in admin account is a new requirement beyond that design.
+- Dockerfile and proxy examples were inspected on 2026-09-13. The runtime image
+  defines a non-root user, and the examples define admin authentication and
+  no-referrer headers. Compose mounts a Caddy upstream pointing to loopback
+  inside the proxy container, not the separate app service; correct and test it.
+- [TODO] Inspect migration constraints/indexes: the SQL file remains absent from
+  the available code index. Deployment behavior still requires runtime checks.
+- [TODO] Recheck source freshness before implementation. Incremental indexing
+  reported no changes, but the later marker search reported an unindexed-change
+  caveat; do not treat its empty result as proof that source markers are absent.
+- Decision (2026-09-13): Support exactly one built-in admin account. Clearly
+  document that direct public exposure is not safe and strongly recommend a
+  trusted reverse proxy with an additional authentication solution.
+- Decision (2026-09-13): The planned admin may assign any pre-existing LLDAP
+  group, not only an application allowlist. Invitation provisioning must not
+  create missing groups. Validate existence before account-creation side effects.
+- [TODO] Verify missing-group behavior against the supported LLDAP version;
+  do not assume membership assignment creates a group. The previously reviewed
+  application rejects unknown groups locally rather than creating them.
+- Decision (2026-09-13): Plaintext directory connections are acceptable on
+  explicitly configured isolated networks with proper firewalls. Recommend
+  verified TLS elsewhere; network isolation is a deployment responsibility.
+- Seven-document workflow completed with evidence gaps explicitly marked
+  `[TODO]`; the group-policy question was answered. See the progress section.
 
-- [x] Define typed configuration for server, database, LLDAP, invite expiry, and password policy.
-- [x] Load non-secret defaults from an optional local TOML configuration file.
-- [x] Support `APP__` environment-variable overrides for deployment.
-- [ ] Keep LDAP bind passwords and other secrets out of committed files.
-- [x] Add a documented example configuration with placeholder values.
+## Phase 2 - Investigation Handoff
 
-## 4. Invite storage
+Investigation date: 2026-09-13. This records the seven documentation areas for
+Phase 3; it does not mark security changes implemented or Phase 4 complete.
+This is the historical Phase 2 snapshot; the completed documents linked above
+supersede its earlier inventory, compiler, proxy, and container evidence gaps.
+The Phase 1 scan script ran on 2026-09-13 under the updated instruction's
+explicit permission exception. It completed the file inventory, recent-history
+ranking, and production marker scan. Remaining deployment-file inspection is
+still open; scan completion alone does not close those verification tasks.
+Indexed reads are used for source, and Markdown intent documents are read under
+the explicit exception.
 
-- [x] Add SQLite and migration support.
-- [x] Create invite and invite-event tables with a hashed invite token, groups, creation time, expiry time, and consumption state.
-- [x] Generate cryptographically secure invite tokens.
-- [x] Store only a hash of each invite token when practical.
-- [x] Validate expiry and one-time use.
-- [x] Consume an invite atomically after successful account provisioning.
-- [x] Add cleanup for expired/revoked invites older than 120 days (background task, runs daily).
+### Stack and Structure
 
-## 5. User invite flow
+- [Cargo.toml](Cargo.toml) declares one package, version 0.1.0, Rust edition 2024,
+  using Cargo. The [README](README.md) requires Rust 1.98 or newer for smoke tests;
+  the manifest has no `rust-version`. Actual compiler and resolved dependency
+  versions remain [TODO]; manifest versions are dependency requirements.
+- Runtime dependencies: config, serde, sha2, sqlx, chrono, rand, reqwest, ldap3,
+  serde_json, uuid, topcoat, topcoat-asset, rustls, rustls-pemfile, and tokio.
+  Development dependencies: dotenvy, reqwest, and testcontainers. SQLx enables
+  SQLite/migrations; the HTTP and LDAP clients enable rustls-related features.
+- Source lives in `src/`, with startup in [src/main.rs](src/main.rs), application
+  context in [src/app_state.rs](src/app_state.rs), and modules for routes, storage,
+  directory integration, configuration, validation, views, and versioning.
+  Indexed supporting areas are `tests/`, `.github/workflows/`, and
+  `lldap-bootstrap/`. Documentation lives in `docs/`.
+- [TODO] Complete the non-indexed file inventory, inspect migrations and the
+  container base image, and confirm repository-local guidance.
 
-- [x] Build the initial admin form for selecting groups and expiration.
-- [x] Return a complete invite URL to the administrator.
-- [x] View invite history in the admin dashboard, with the ability to disable (revoke) active invites.
-- [x] Build `/invite?code=...` with username, email, first name, last name, and password fields.
-- [x] Preserve the invite token through form submission without trusting hidden fields alone.
-- [x] Validate the invite before provisioning.
-- [x] Validate username and email format and uniqueness.
-- [x] Validate the configured password policy.
-- [x] Return clear success and failure views.
+### Architecture and Conventions
 
-## 6. LLDAP provisioning
+- [Startup](src/main.rs) bundles assets, loads configuration, creates `data/`,
+  initializes shared state and migrations, starts cleanup, discovers routes,
+  attaches application context, and starts Topcoat.
+- [AppState](src/app_state.rs) holds configuration, an invite repository backed
+  by a SQLite pool with at most five connections, and an LLDAP client.
+- [Redemption](src/routes.rs) validates form fields, checks directory uniqueness,
+  validates the stored invite, provisions the account, then consumes the invite.
+  Failed consumption attempts account deletion and ignores deletion errors.
+- [Storage](src/invite_storage.rs) uses parameterized SQL and transactions for
+  invite mutations and event insertion. Consumption is atomic within SQLite,
+  not across SQLite and LLDAP. Cleanup runs every 24 hours with a 120-day cutoff
+  for eligible expired/revoked invites and their events; consumed invites are
+  retained by the current cleanup predicate.
+- Observed Rust naming uses snake_case files/functions and PascalCase types.
+  SQLx errors propagate from storage; the LLDAP client uses `LldapError`; routes
+  render user-facing messages and sometimes discard errors. Startup uses
+  `expect`/`unwrap`. Request logging emits JSON through stderr, not a dedicated
+  tracing layer. These are observations, not endorsements of every pattern.
+- [CI](.github/workflows/ci.yml) enforces formatting and Clippy. [TODO] Confirm
+  any additional local formatting/import rules before restructuring source.
 
-- [x] Implement a dedicated LLDAP client service.
-- [x] Add LDAP TLS configuration with CA file and verify-skip support.
-- [x] Use a service account with the minimum required permissions.
-- [x] Provision the user with the required attributes.
-- [x] Assign the groups stored on the invite.
-- [x] Use TLS or a private trusted network for LDAP traffic.
-- [x] Avoid blocking synchronous LDAP calls on async request threads.
-- [x] Define rollback behavior when provisioning succeeds but invite consumption fails.
-- [x] Never log passwords, bind credentials, or complete invite tokens.
+### Integrations and Testing
 
-## 7. Admin protection and HTTP security
+- [LLDAP client](src/lldap.rs) authenticates over HTTP, sends GraphQL requests,
+  and uses LDAP password modification. This is an LLDAP-specific management
+  integration, not evidence of compatibility with arbitrary LDAP servers.
+- [Deployment documentation](docs/deployment.md) describes environment-injected
+  secrets, a non-root container, internal networking, GHCR publishing, and
+  backup/recovery procedures. [Proxy documentation](docs/README.md) describes
+  authenticated Caddy/Nginx examples and Nginx rate limits. Verify actual config
+  and deployed behavior before classifying these safeguards as absent or complete.
+- [LLDAP requirements](docs/lldap-requirements.md) explicitly includes permission
+  to delete users during compensation. [TODO] Verify the least-privilege role
+  that supports every required operation on the supported LLDAP version.
+- [CI](.github/workflows/ci.yml) runs `cargo fmt --check`, Clippy with warnings
+  denied, and `cargo test`. Unit tests are embedded in source; the storage suite
+  includes concurrent consumption. No coverage threshold appears in this workflow.
+- [Smoke tests](tests/lldap_smoke.rs) are ignored by ordinary test runs, require
+  Docker and `dev.env`, and use `lldap/lldap:latest`. The account test calls
+  GraphQL creation and LDAP password modification directly; it does not exercise
+  the application's complete `provision_user` or redemption flow, group assignment,
+  or compensation failures. Its cleanup does not assert the returned `ok` value.
+- [TODO] Establish a deterministic fault-injection strategy and execute the full
+  workflow tests; the supplied passing ordinary test run is not that evidence.
+- [TODO] Verify monitoring, external log collection, and any operational queues;
+  no such deployment guarantees can be established from the reviewed docs.
 
-- [x] Keep admin authentication and TLS termination in the reverse proxy as planned.
-- [x] Restrict admin routes so they are not publicly reachable through an unprotected path.
-- [x] Validate forwarded headers and trusted proxy configuration.
-- [ ] Add CSRF protection for state-changing browser forms where required.
-- [x] Add rate limiting for invite generation and registration attempts.
-- [ ] Set secure cookies and security-related response headers.
+### Concerns and Intent vs. Reality
 
-## 8. Tests and verification
+- [Lifecycle documentation](docs/invite-lifecycle.md) puts invite validation
+  before username/email lookups; [the handler](src/routes.rs) performs lookups
+  first. Correct the implementation and align the documentation.
+- The lifecycle's atomic-consumption wording must distinguish the SQLite
+  transaction from the non-atomic provisioning workflow. An unused invite after
+  a provisioning error does not guarantee a clean directory or safe retry.
+- [Configuration documentation](docs/configuration.md) says `server.host` and
+  `server.port` control binding, but [startup](src/main.rs) does not visibly pass
+  them to the server. [TODO] Test the effective bind address before declaring the
+  environment-variable example functional or choosing a framework-specific fix.
+- The [README](README.md) describes append-only invite events, while
+  [cleanup](src/invite_storage.rs) deletes events for eligible stale invites.
+  Document this retention exception; permanent audit retention is not guaranteed.
+- The documented proxy-only authentication model predates the user's decision
+  to add one built-in admin account. That is planned functionality, not proof
+  that the previous deployment intentionally exposed unauthenticated admin routes.
+- [Routes](src/routes.rs) has 1,206 indexed lines mixing HTTP handling, validation
+  orchestration, logging, markup, CSS, and scripts. [Storage](src/invite_storage.rs)
+  has 565 lines including tests; length alone is not proof of a design defect.
+  Avoid a broad refactor unless it supports the scoped safety changes.
+- Indexed 90-day git churn samples: `src/routes.rs` has six commits and
+  `src/lldap.rs` has two, both first seen on 2026-09-12. These are sampled counts,
+  not a full-repository ranking or proof of instability. [TODO] Complete ranking
+  and production/test TODO-marker counts with fresh, permitted scan evidence.
+- Existing high-priority findings remain: unknown-group cleanup bypass,
+  provisioning-before-consumption races, discarded mutation outcomes, pre-invite
+  directory enumeration, and full Referer logging. Runtime reproductions and
+  fixes remain unchecked in the sections below.
 
-- [x] Unit-test token generation, hashing, expiry, password policy, and email validation.
-- [x] Test atomic invite consumption under concurrent requests.
-- [x] Add route tests for valid, expired, used, and invalid invites.
-- [x] Add an LLDAP user-provisioning integration test or mock client.
-- [x] Add an opt-in LLDAP Docker smoke test using `lldap/lldap:latest` and `dev.env`.
-- [x] Run `cargo fmt --check`, `cargo clippy`, and `cargo test` in CI.
-- [x] Test configuration loading with file values and environment overrides.
+## P0 - Verify the Access Boundary
 
-## 9. Deployment
+- [ ] Review repository guidance, proxy configuration, Dockerfile, and migrations.
+- [ ] Implement exactly one built-in admin account with secure credential
+      provisioning, password hashing, and no default usable credentials.
+- [ ] Add secure session handling, logout, and admin login throttling.
+- [ ] Protect admin pages and mutations with application authentication and
+      authorization; keep the login endpoint accessible without a session.
+- [ ] Document that built-in authentication alone is not safe for direct public
+      exposure; strongly recommend a trusted reverse proxy with additional auth.
+- [ ] Document and test backend isolation so deployments using proxy auth cannot
+      bypass it by reaching the application directly.
+- [ ] Verify CSRF protection for invite generation and revocation.
+- [ ] Enforce the chosen group policy: any pre-existing LLDAP group, with
+      existence checked before provisioning and no implicit group creation.
+- [ ] Test unauthenticated access, proxy bypass, cross-origin submissions,
+      and attempts to assign nonexistent groups.
 
-- [x] Add a multi-stage Dockerfile using a current Rust builder image.
-- [x] Add a non-root runtime container.
-- [x] Add Docker Compose with persistent SQLite storage and read-only configuration mounts.
-- [x] Bind the application only to the reverse proxy network or localhost.
-- [x] Add a reverse proxy configuration with HTTPS and admin route protection.
-- [x] Document database backups, secret injection, upgrades, and recovery.
+## P1 - Make Redemption Safe and Recoverable
 
-## 10. Documentation
+Confirmed in the reviewed source: directory lookups precede invite validation;
+lookup errors are treated as not found; provisioning precedes invite consumption;
+unknown-group errors can bypass cleanup; mutation result flags are discarded.
+SQLite consumption itself is transactional and has a concurrency test.
 
-- [x] Update the README with local development setup.
-- [x] Document the invite lifecycle and security assumptions.
-- [x] Document required LLDAP permissions and attributes.
-- [x] Document configuration keys and deployment commands.
-- [x] Add an operations checklist for rotating credentials and backing up data.
+- [ ] Validate invite format and active state before directory lookups.
+- [ ] Fail closed on directory lookup errors instead of treating them as not found.
+- [ ] Design exclusive redemption before provisioning; an atomic persistent
+      claim is the proposed approach, not an existing requirement from project intent.
+- [ ] Implement the chosen claim, completion, and recovery model without holding
+      a database transaction open across network calls.
+- [ ] Define behavior for concurrent redemption, expiry, and revocation.
+- [ ] Test membership assignment to a nonexistent group on the supported LLDAP
+      version and record the actual error or side effects. Separately test the
+      application's unknown-group handling; it currently fails before sending
+      a membership request for that group, but after creating the account.
+- [ ] Resolve and authorize all requested groups before creating an account.
+- [ ] Check directory mutation results instead of discarding their ok values.
+- [ ] Handle every post-creation failure consistently.
+- [ ] Persist failed cleanup for reconciliation; never silently abandon it.
+- [ ] Reconcile ambiguous outcomes before retrying account creation.
+- [ ] Test concurrent submissions, unknown groups, partial membership failures,
+      database failures, process interruption, and failed account deletion.
+- [ ] Verify one invite cannot leave multiple usable accounts.
+
+## P1 - Protect Secrets and Bound Resource Usage
+
+Confirmed in the reviewed source: request logging retains the full Referer;
+secret-bearing types derive Debug; expiration arithmetic has no upper bound.
+Debug derives create an accidental-disclosure risk, not proof of a logged password.
+Proxy headers, framework defaults, and deployment rate limits remain unverified.
+
+- [ ] Redact invitation codes from application and proxy logs, including Referer.
+- [ ] Verify effective no-referrer and no-store policies on sensitive responses;
+      configure them where missing.
+- [ ] Redact passwords from debug output for configuration and form types.
+- [ ] Add explicit HTTP/LDAP deadlines and bounded provisioning concurrency.
+- [ ] Verify public submission and admin mutation rate limits; add them where missing.
+- [ ] Trust forwarded client addresses only from configured proxies.
+- [ ] Bound request bodies, field lengths, group counts, and invite lifetimes.
+- [ ] Use checked expiration arithmetic.
+- [ ] Test log redaction, oversized input, timeout handling, and rate limits.
+
+## P2 - Configuration and Operational Reliability
+
+Development transport and credential defaults are present; whether a production
+deployment uses them is unverified. Validators trim usernames and emails locally,
+but the handler passes the original values to directory operations.
+
+- [ ] Reject development credentials in production and validate transport settings
+      against the documented deployment mode.
+- [ ] Ensure local `.env` files are ignored before following deployment guidance;
+      the repository currently ignores `dev.env` but not a general `.env` file.
+- [ ] Correct the containerized Caddy upstream to address the app service rather
+      than proxy-container loopback; verify directory reachability from the
+      internal backend network and complete the end-to-end deployment check.
+- [ ] Support explicitly configured plaintext HTTP/LDAP on isolated, properly
+      firewalled networks; document that this exposes credentials to anyone able
+      to observe that traffic and that the app cannot verify firewall isolation.
+- [ ] Recommend TLS outside that exception and verify certificates when TLS is used.
+- [ ] Normalize usernames and emails once before validation and use.
+- [ ] Preserve current password handling: do not trim or silently transform passwords.
+- [ ] Reconcile server host/port configuration with actual startup behavior.
+- [ ] Report revocation and database failures accurately.
+- [ ] Align lifecycle documentation with actual validation order and transaction
+      boundaries; document audit-event retention exceptions.
+- [ ] Add sanitized operational logs and attributable admin audit events.
+- [ ] Verify database permissions, migration behavior, backup, and restore.
+
+## P2 - Automated Verification
+
+Reviewed CI already runs formatting, Clippy, and ordinary tests. Both LLDAP
+smoke tests are marked ignored, so an ordinary passing test run does not verify
+those integrations. Existing storage concurrency coverage is not end-to-end
+provisioning coverage.
+
+- [ ] Preserve existing formatting, Clippy, unit, and storage concurrency checks.
+- [ ] Add handler-level tests covering the complete redemption workflow.
+- [ ] Exercise `provision_user` itself, group membership, missing-group behavior,
+      and compensation outcomes rather than only direct protocol calls.
+- [ ] Make LLDAP integration tests independent of a developer's local env file.
+- [ ] Pin the integration image and explicitly run ignored smoke tests in CI.
+- [ ] Add dependency-advisory scanning and pin CI actions to reviewed commits.
+- [ ] Review container privileges, exposed ports, and runtime filesystem access.
+- [ ] Run the full verification suite and record remaining deployment assumptions.
+
+## Evidence
+
+- [Project README](README.md), [proxy overview](docs/README.md), and
+  [deployment guide](docs/deployment.md): stated deployment intent, proxy auth,
+  container isolation, secrets, and backup/recovery procedures.
+- [Lifecycle](docs/invite-lifecycle.md), [configuration guide](docs/configuration.md),
+  [operations](docs/operations.md), and [LLDAP requirements](docs/lldap-requirements.md):
+  guarantees and deployment assumptions compared with source during Phase 2.
+- [Manifest](Cargo.toml) and [application state](src/app_state.rs): dependency
+  requirements, database initialization, and shared service wiring.
+- [Request handlers and logging](src/routes.rs): admin handlers, lookup order,
+  provisioning/consumption order, compensation, Referer logging, and expiry input.
+- [Directory client](src/lldap.rs): group resolution, cleanup paths, mutation
+  result handling, and client construction.
+- [Invite storage](src/invite_storage.rs): transactional consumption and storage
+  concurrency tests.
+- [Configuration](src/configuration.rs) and [startup](src/main.rs): development
+  defaults and server configuration wiring to verify.
+- [Validation](src/validation.rs): local trimming and current password handling.
+- [Compose](docker-compose.yml): proxy service and internal backend network;
+  this alone does not verify proxy authorization or effective runtime isolation.
+- [CI](.github/workflows/ci.yml) and [LLDAP smoke tests](tests/lldap_smoke.rs):
+  current gates and explicitly ignored integration tests.
+- Fresh terminal verification on 2026-09-13: ordinary Cargo tests, exit 0,
+  21 passed and 2 Docker tests ignored; `rustc --version` reports Rust 1.98.1.
+- User decisions on 2026-09-13: one built-in admin account, warning against direct
+  public exposure, strong recommendation for authenticated reverse-proxy
+  protection, and acceptance of plaintext directory traffic on isolated networks
+  with proper firewalls. The admin may assign any pre-existing LLDAP group.
+  Missing-group server behavior remains a verification task.
