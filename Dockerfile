@@ -24,9 +24,11 @@ RUN apt-get update \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/rust-invite-system /usr/local/bin/rust-invite-system
+COPY --from=builder /app/assets /app/assets
+COPY --from=builder /app/assets /usr/local/bin/assets
 
 RUN mkdir -p /app/data \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app /usr/local/bin/assets
 
 USER appuser
 

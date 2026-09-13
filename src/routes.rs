@@ -1,10 +1,13 @@
 use chrono::{DateTime, Duration, Utc};
 use rand::{Rng, distr::Alphanumeric};
 use serde::Deserialize;
+use serde_json::{Map, Value};
+use std::time::Instant;
 use topcoat::{
     Result,
     asset::{Asset, asset},
     context::{Cx, app_context},
+    router::request::{headers, method, uri},
     router::{
         content::Form,
         error::{SeeOther, see_other},
@@ -63,6 +66,100 @@ fn invite_is_active(record: &InviteRecord, now: DateTime<Utc>) -> bool {
             .expires_at
             .parse::<DateTime<Utc>>()
             .is_ok_and(|expires_at| expires_at > now)
+}
+
+fn header_value(cx: &Cx, name: &str) -> String {
+    headers(cx)
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| String::from("-"))
+}
+
+fn request_client_ip(cx: &Cx) -> String {
+    let forwarded_for = header_value(cx, "x-forwarded-for");
+    let forwarded_ip = forwarded_for
+        .split(',')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("-");
+
+    if forwarded_ip != "-" {
+        forwarded_ip.to_owned()
+    } else {
+        let real_ip = header_value(cx, "x-real-ip");
+        if real_ip != "-" {
+            real_ip
+        } else {
+            String::from("unknown")
+        }
+    }
+}
+
+struct RequestLog {
+    method: String,
+    path: String,
+    client_ip: String,
+    forwarded_for: String,
+    user_agent: String,
+    referer: String,
+    message_field: String,
+    started_at: Instant,
+}
+
+impl RequestLog {
+    fn new(cx: &Cx, message_field: &str) -> Self {
+        let uri = uri(cx);
+        let request = Self {
+            method: method(cx).to_string(),
+            path: uri.path().to_owned(),
+            client_ip: request_client_ip(cx),
+            forwarded_for: header_value(cx, "x-forwarded-for"),
+            user_agent: header_value(cx, "user-agent"),
+            referer: header_value(cx, "referer"),
+            message_field: message_field.to_owned(),
+            started_at: Instant::now(),
+        };
+
+        request.emit_json("info", "request start", None);
+
+        request
+    }
+
+    fn emit_json(&self, level: &str, message: &str, duration_ms: Option<u128>) {
+        let mut fields = Map::new();
+        fields.insert(String::from("ts"), Value::from(chrono::Utc::now().to_rfc3339()));
+        fields.insert(String::from("level"), Value::from(level));
+        fields.insert(self.message_field.clone(), Value::from(message));
+        fields.insert(String::from("method"), Value::from(self.method.clone()));
+        fields.insert(String::from("path"), Value::from(self.path.clone()));
+        fields.insert(String::from("client_ip"), Value::from(self.client_ip.clone()));
+        fields.insert(String::from("forwarded_for"), Value::from(self.forwarded_for.clone()));
+        fields.insert(String::from("user_agent"), Value::from(self.user_agent.clone()));
+        fields.insert(String::from("referer"), Value::from(self.referer.clone()));
+
+        if let Some(duration_ms) = duration_ms {
+            fields.insert(
+                String::from("duration_ms"),
+                Value::from(duration_ms.min(u128::from(u64::MAX)) as u64),
+            );
+        }
+
+        eprintln!("{}", Value::Object(fields));
+    }
+}
+
+impl Drop for RequestLog {
+    fn drop(&mut self) {
+        self.emit_json(
+            "info",
+            "request complete",
+            Some(self.started_at.elapsed().as_millis()),
+        );
+    }
 }
 
 const INVITE_CSS: &str = r#"
@@ -441,7 +538,10 @@ const ADMIN_MODAL_SCRIPT: &str = r#"
 "#;
 
 #[page("/")]
-async fn home() -> Result<impl View> {
+async fn home(cx: &Cx) -> Result<impl View> {
+    let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
+
     Ok(view! {
         <!DOCTYPE html>
         <html lang="en">
@@ -461,6 +561,7 @@ async fn home() -> Result<impl View> {
 #[page("/health")]
 async fn health(cx: &Cx) -> Result<impl View> {
     let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
 
     Ok(view! {
         <p>"ok (version: " (app_version()) ", invite expiry: " (state.config.invites.expiration_hours) " hours)"</p>
@@ -470,6 +571,7 @@ async fn health(cx: &Cx) -> Result<impl View> {
 #[page("/admin")]
 async fn admin(cx: &Cx) -> Result<impl View> {
     let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let theme_class = state.config.appearance.default_theme.css_class();
     let expiration_hours = state.config.invites.expiration_hours;
     let now = Utc::now();
@@ -595,6 +697,7 @@ async fn admin(cx: &Cx) -> Result<impl View> {
 #[route(POST "/admin/invites/revoke")]
 async fn revoke_invite_route(cx: &Cx, Form(form): Form<RevokeInviteForm>) -> Result<SeeOther> {
     let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let _ = state
         .invites
         .revoke_invite(&form.id, &Utc::now().to_rfc3339())
@@ -605,6 +708,8 @@ async fn revoke_invite_route(cx: &Cx, Form(form): Form<RevokeInviteForm>) -> Res
 
 #[page(POST "/admin/invites/generate")]
 async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Result<impl View> {
+    let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let groups: Vec<String> = form
         .groups
         .split(',')
@@ -634,7 +739,7 @@ async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Resul
             .collect();
         let now = Utc::now();
         let expires_at = now + Duration::hours(form.expiration_hours);
-        let repository = &app_context::<AppState>(cx).invites;
+        let repository = &state.invites;
         let invite_url = format!("/invite?code={token}");
 
         if repository
@@ -776,9 +881,10 @@ fn invite_form_view(
 
 #[page("/invite")]
 async fn invite(cx: &Cx) -> Result<impl View> {
+    let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let query = query_params::<InviteQuery>(cx)?;
     let code = query.code.clone().unwrap_or_default();
-    let state: &AppState = app_context(cx);
     let theme_class = state.config.appearance.default_theme.css_class().to_owned();
 
     invite_form_view(
@@ -797,6 +903,7 @@ async fn invite(cx: &Cx) -> Result<impl View> {
 #[page(POST "/invite/submit")]
 async fn submit_invite(cx: &Cx, Form(form): Form<SubmitInviteForm>) -> Result<impl View> {
     let state: &AppState = app_context(cx);
+    let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let theme_class = state.config.appearance.default_theme.css_class().to_owned();
     let query = query_params::<SubmitInviteQuery>(cx)?;
     let code = match query.code.clone() {

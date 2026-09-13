@@ -18,6 +18,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub appearance: AppearanceConfig,
     #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
     pub password_policy: PasswordPolicy,
 }
 
@@ -31,6 +33,20 @@ impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
             default_theme: Theme::Light,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    pub message_field: String,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            message_field: String::from("msg"),
         }
     }
 }
@@ -155,6 +171,7 @@ mod tests {
     struct EnvGuard {
         server_port: Option<OsString>,
         ldap_http_url: Option<OsString>,
+        logging_message_field: Option<OsString>,
     }
 
     impl EnvGuard {
@@ -162,6 +179,7 @@ mod tests {
             Self {
                 server_port: std::env::var_os("APP__SERVER__PORT"),
                 ldap_http_url: std::env::var_os("APP__LDAP__HTTP_URL"),
+                logging_message_field: std::env::var_os("APP__LOGGING__MESSAGE_FIELD"),
             }
         }
     }
@@ -177,6 +195,10 @@ mod tests {
                     Some(value) => std::env::set_var("APP__LDAP__HTTP_URL", value),
                     None => std::env::remove_var("APP__LDAP__HTTP_URL"),
                 }
+                match self.logging_message_field.take() {
+                    Some(value) => std::env::set_var("APP__LOGGING__MESSAGE_FIELD", value),
+                    None => std::env::remove_var("APP__LOGGING__MESSAGE_FIELD"),
+                }
             }
         }
     }
@@ -191,6 +213,7 @@ mod tests {
         unsafe {
             std::env::remove_var("APP__SERVER__PORT");
             std::env::remove_var("APP__LDAP__HTTP_URL");
+            std::env::remove_var("APP__LOGGING__MESSAGE_FIELD");
         }
 
         let suffix = SystemTime::now()
@@ -215,6 +238,7 @@ mod tests {
         assert!(config.ldap.tls_ca_file.is_none());
         assert_eq!(config.ldap.username, "admin");
         assert_eq!(config.appearance.default_theme.css_class(), "theme-dark");
+        assert_eq!(config.logging.message_field, "msg");
 
         fs::remove_file(path).expect("test config should be removable");
     }
@@ -241,12 +265,14 @@ mod tests {
         unsafe {
             std::env::set_var("APP__SERVER__PORT", "7777");
             std::env::set_var("APP__LDAP__HTTP_URL", "http://env.example");
+            std::env::set_var("APP__LOGGING__MESSAGE_FIELD", "message");
         }
 
         let config = AppConfig::load(&path).expect("test config should parse");
 
         assert_eq!(config.server.port, 7777);
         assert_eq!(config.ldap.http_url, "http://env.example");
+        assert_eq!(config.logging.message_field, "message");
 
         fs::remove_file(path).expect("test config should be removable");
     }

@@ -19,6 +19,10 @@ expiration_hours = 48
 [appearance]
 default_theme = "light"
 
+[logging]
+# Change this if your log ingestion pipeline expects a different message field.
+message_field = "msg"
+
 [password_policy]
 minimum_length = 12
 require_uppercase = true
