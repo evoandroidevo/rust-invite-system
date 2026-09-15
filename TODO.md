@@ -2,7 +2,7 @@
 
 Scope: rust-invite-system
 Review date: 2026-09-13
-Status: Seven-document codebase workflow completed; deployment hardening started.
+Status: Deployment hardening started; built-in admin authentication implemented.
 Fresh verification on 2026-09-13: ordinary Cargo tests passed (21 passed,
 2 Docker smoke tests ignored); local compiler is Rust 1.98.1. Docker integration,
 deployment checks, and dependency scanning remain unverified.
@@ -20,7 +20,26 @@ the deployment or complete redemption workflow is secure.
   and produced `app:8080`; this does not verify live proxying, certificates,
   authentication enforcement, or directory reachability.
 - Added a `.env` ignore rule and a README deployment-boundary warning.
-  The single built-in admin account remains unimplemented.
+- Added the single built-in `admin` account with hidden-input Argon2id hash
+  provisioning, disabled access when no hash is configured, bounded password
+  verification, an exact HTTPS origin, and redacted admin configuration output.
+- Added one active eight-hour in-memory session, secure host-only cookies,
+  logout, and a global five-attempts-per-minute login throttle. Sessions and
+  throttling reset on restart; multi-instance deployments are not supported.
+- Protected all current admin operations and added CSRF tokens plus origin
+  validation to login, generation, revocation, and logout. Core and real-router
+  regression tests cover login, cookie flags, unauthorized access, forged proxy
+  headers, CSRF rejection, mutations, rotation, expiry, throttling, and logout.
+  This does not establish live proxy isolation or LLDAP group correctness.
+- Admin implementation verification: 33 ordinary tests passed; two Docker
+  LLDAP tests remain ignored. Clippy with all targets/features and warnings
+  denied passed, as did the application build and Compose configuration checks.
+  Firefox 155 checks passed against a fresh build at 1440x900, 390x844, and
+  320x720: login rendering, keyboard focus, required-password validation,
+  no horizontal overflow, no page-script errors, no-store/no-referrer headers,
+  and unauthenticated admin rejection. Screenshots were visually inspected.
+  This used a loopback HTTP preview with no admin credentials; authenticated
+  browser sessions and deployed HTTPS/proxy behavior remain unverified.
 - `docs/README.md` and `docs/deployment.md`, cited by the historical review
   below, are absent from this checkout. The README now provides the current
   deployment-boundary guidance; historical citations are not fresh evidence.
@@ -190,20 +209,21 @@ the explicit exception.
 ## P0 - Verify the Access Boundary
 
 - [ ] Review repository guidance, proxy configuration, Dockerfile, and migrations.
-- [ ] Implement exactly one built-in admin account with secure credential
+- [x] Implement exactly one built-in admin account with secure credential
       provisioning, password hashing, and no default usable credentials.
-- [ ] Add secure session handling, logout, and admin login throttling.
-- [ ] Protect admin pages and mutations with application authentication and
+- [x] Add secure session handling, logout, and admin login throttling.
+- [x] Protect admin pages and mutations with application authentication and
       authorization; keep the login endpoint accessible without a session.
 - [x] Document that built-in authentication alone is not safe for direct public
       exposure; strongly recommend a trusted reverse proxy with additional auth.
 - [ ] Document and test backend isolation so deployments using proxy auth cannot
       bypass it by reaching the application directly.
-- [ ] Verify CSRF protection for invite generation and revocation.
+- [x] Verify CSRF protection for invite generation and revocation.
 - [ ] Enforce the chosen group policy: any pre-existing LLDAP group, with
       existence checked before provisioning and no implicit group creation.
-- [ ] Test unauthenticated access, proxy bypass, cross-origin submissions,
-      and attempts to assign nonexistent groups.
+- [x] Test unauthenticated application access, forged proxy identity headers,
+      and cross-origin admin submissions.
+- [ ] Test deployed proxy bypass and attempts to assign nonexistent groups.
 
 ## P1 - Make Redemption Safe and Recoverable
 

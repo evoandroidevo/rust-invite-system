@@ -1,3 +1,5 @@
+pub mod admin_auth;
+pub mod admin_routes;
 pub mod app_state;
 pub mod configuration;
 pub mod invite_storage;

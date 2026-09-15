@@ -4,14 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+argon2 = "0.5"
+subtle = "2"
+rpassword = "7"
 config = "0.15"
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+sqlx = { version = "0.8", default-features = false, features = [
+  "runtime-tokio",
+  "sqlite",
+  "migrate",
+  "macros",
+] }
 chrono = { version = "0.4", features = ["clock"] }
 rand = "0.9"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+] }
+ldap3 = { version = "0.12", default-features = false, features = [
+  "tls-rustls-ring",
+] }
 serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 topcoat = "0.8.0"
@@ -22,5 +35,8 @@ tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
 dotenvy = "0.15"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+] }
 testcontainers = "0.28"

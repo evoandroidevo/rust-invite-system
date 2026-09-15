@@ -1,3 +1,7 @@
+[admin]
+password_hash = ""
+origin = "https://invite.example.com"
+
 [database]
 url = "sqlite://./data/invites.db"
 

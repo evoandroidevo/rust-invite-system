@@ -4,6 +4,7 @@ use std::time::Duration as StdDuration;
 use chrono::{Duration, Utc};
 use topcoat::{
     asset::{AssetBundle, RouterBuilderAssetExt},
+    cookie::RouterBuilderCookieExt,
     router::{Router, RouterBuilderDiscoverExt},
 };
 
@@ -41,6 +42,13 @@ fn spawn_invite_cleanup_task(invites: rust_invite_system::invite_storage::Invite
 
 #[tokio::main]
 async fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--hash-admin-password") {
+        if let Err(error) = provision_admin_password() {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     sync_assets().expect("assets must be bundled");
     let config = AppConfig::load("config.toml").expect("configuration must be valid");
     std::fs::create_dir_all("data").expect("database directory must be available");
@@ -50,9 +58,23 @@ async fn main() {
     spawn_invite_cleanup_task(state.invites.clone());
     let router = Router::builder()
         .discover()
+        .cookies()
         .assets(AssetBundle::load().expect("asset bundle must be available"))
         .app_context(state)
         .build();
 
     topcoat::start(router).await.unwrap();
+}
+
+fn provision_admin_password() -> Result<(), Box<dyn std::error::Error>> {
+    let password = rpassword::prompt_password("Admin password (16+ bytes): ")?;
+    let confirmation = rpassword::prompt_password("Confirm admin password: ")?;
+    if password != confirmation {
+        return Err("Passwords do not match".into());
+    }
+    println!(
+        "{}",
+        rust_invite_system::admin_auth::hash_password(&password)?
+    );
+    Ok(())
 }

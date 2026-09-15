@@ -8,6 +8,8 @@ use crate::validation::PasswordPolicy;
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
+    pub admin: AdminConfig,
+    #[serde(default)]
     pub database: DatabaseConfig,
     #[serde(default)]
     pub server: ServerConfig,
@@ -21,6 +23,41 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub password_policy: PasswordPolicy,
+}
+
+#[derive(Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct AdminConfig {
+    pub password_hash: String,
+    pub origin: String,
+}
+
+impl std::fmt::Debug for AdminConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AdminConfig")
+            .field("password_hash", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod admin_config_tests {
+    use super::AdminConfig;
+
+    #[test]
+    fn no_default_credentials() {
+        assert!(AdminConfig::default().password_hash.is_empty());
+    }
+
+    #[test]
+    fn debug_redacts_password_hash() {
+        let config = AdminConfig {
+            password_hash: "sensitive-hash".to_owned(),
+            ..AdminConfig::default()
+        };
+        assert!(!format!("{config:?}").contains("sensitive-hash"));
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

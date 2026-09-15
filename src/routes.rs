@@ -17,6 +17,7 @@ use topcoat::{
 };
 use uuid::Uuid;
 
+use crate::admin_routes::{require_admin, require_admin_mutation};
 use crate::app_state::AppState;
 use crate::invite_storage::{InviteRecord, hash_token};
 use crate::lldap::LldapError;
@@ -36,12 +37,16 @@ struct SubmitInviteQuery {
 
 #[derive(Debug, Deserialize)]
 struct GenerateInviteForm {
+    #[serde(default)]
+    csrf: String,
     groups: String,
     expiration_hours: i64,
 }
 
 #[derive(Debug, Deserialize)]
 struct RevokeInviteForm {
+    #[serde(default)]
+    csrf: String,
     id: String,
 }
 
@@ -355,7 +360,7 @@ const THEME_SCRIPT: &str = r#"
     });
 "#;
 
-const ADMIN_CSS: &str = r#"
+pub(crate) const ADMIN_CSS: &str = r#"
     :root {
         color-scheme: light dark;
         --page-bg: #f5f1eb;
@@ -582,6 +587,7 @@ async fn health(cx: &Cx) -> Result<impl View> {
 
 #[page("/admin")]
 async fn admin(cx: &Cx) -> Result<impl View> {
+    let csrf = require_admin(cx)?;
     let state: &AppState = app_context(cx);
     let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let theme_class = state.config.appearance.default_theme.css_class();
@@ -590,6 +596,8 @@ async fn admin(cx: &Cx) -> Result<impl View> {
     let invites = state.invites.list_recent(20).await.unwrap_or_default();
 
     Ok(view! {
+        ((topcoat::router::header::CACHE_CONTROL, topcoat::router::HeaderValue::from_static("no-store")))
+        ((topcoat::router::header::REFERRER_POLICY, topcoat::router::HeaderValue::from_static("no-referrer")))
         <!DOCTYPE html>
         <html lang="en">
             <head>
@@ -612,6 +620,10 @@ async fn admin(cx: &Cx) -> Result<impl View> {
                                 <span class="theme-label">"Toggle theme"</span>
                             </button>
                         </div>
+                        <form action="/admin/logout" method="post">
+                            <input type="hidden" name="csrf" value=(csrf.clone()) />
+                            <button type="submit">"Sign out"</button>
+                        </form>
                         <p class="intro">"Create one-time invitation links and assign the directory groups new accounts should receive."</p>
                     </header>
                     <div class="admin-grid">
@@ -619,6 +631,7 @@ async fn admin(cx: &Cx) -> Result<impl View> {
                             <h2 id="generate-title">"Generate an invitation"</h2>
                             <p>"The generated link will be available after the invite service validates and stores these settings."</p>
                             <form id="generate-invite-form" action="/admin/invites/generate" method="post">
+                                <input type="hidden" name="csrf" value=(csrf.clone()) />
                                 <label>
                                     "Directory groups"
                                     <input type="text" name="groups" placeholder="developers, vpn-users" autocomplete="off" required=(true) />
@@ -639,7 +652,7 @@ async fn admin(cx: &Cx) -> Result<impl View> {
                             </div>
                             <div class="stat">
                                 <strong>"Protected"</strong>
-                                <span>"Admin access is expected to be enforced by the reverse proxy."</span>
+                                <span>"Signed in as admin"</span>
                             </div>
                         </aside>
                     </div>
@@ -681,6 +694,7 @@ async fn admin(cx: &Cx) -> Result<impl View> {
                                             <td>
                                                 if invite_status(record, now) == "Active" {
                                                     <form class="revoke-form" action="/admin/invites/revoke" method="post">
+                                                        <input type="hidden" name="csrf" value=(csrf.clone()) />
                                                         <input type="hidden" name="id" value=(record.id.clone()) />
                                                         <button class="revoke-button" type="submit">"Disable"</button>
                                                     </form>
@@ -708,6 +722,7 @@ async fn admin(cx: &Cx) -> Result<impl View> {
 
 #[route(POST "/admin/invites/revoke")]
 async fn revoke_invite_route(cx: &Cx, Form(form): Form<RevokeInviteForm>) -> Result<SeeOther> {
+    require_admin_mutation(cx, &form.csrf)?;
     let state: &AppState = app_context(cx);
     let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let _ = state
@@ -720,6 +735,7 @@ async fn revoke_invite_route(cx: &Cx, Form(form): Form<RevokeInviteForm>) -> Res
 
 #[page(POST "/admin/invites/generate")]
 async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Result<impl View> {
+    require_admin_mutation(cx, &form.csrf)?;
     let state: &AppState = app_context(cx);
     let _request_log = RequestLog::new(cx, &state.config.logging.message_field);
     let groups: Vec<String> = form
@@ -785,6 +801,8 @@ async fn generate_invite(cx: &Cx, Form(form): Form<GenerateInviteForm>) -> Resul
 
     Ok(view! {
         <section class="admin-card">
+            ((topcoat::router::header::CACHE_CONTROL, topcoat::router::HeaderValue::from_static("no-store")))
+            ((topcoat::router::header::REFERRER_POLICY, topcoat::router::HeaderValue::from_static("no-referrer")))
             <p class="eyebrow">"Invitation ready"</p>
             <h1>"Share this invite link"</h1>
             <p>(message)</p>
