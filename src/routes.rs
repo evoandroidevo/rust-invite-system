@@ -652,7 +652,7 @@ async fn admin(cx: &Cx) -> Result<impl View> {
                             </div>
                             <div class="stat">
                                 <strong>"Protected"</strong>
-                                <span>"Signed in as admin"</span>
+                                <span>"Signed in as " (state.config.admin.username.clone())</span>
                             </div>
                         </aside>
                     </div>

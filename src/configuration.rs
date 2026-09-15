@@ -25,11 +25,22 @@ pub struct AppConfig {
     pub password_policy: PasswordPolicy,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(default)]
 pub struct AdminConfig {
+    pub username: String,
     pub password_hash: String,
     pub origin: String,
+}
+
+impl Default for AdminConfig {
+    fn default() -> Self {
+        Self {
+            username: "admin".to_owned(),
+            password_hash: String::new(),
+            origin: String::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for AdminConfig {
@@ -47,7 +58,16 @@ mod admin_config_tests {
 
     #[test]
     fn no_default_credentials() {
+        assert_eq!(AdminConfig::default().username, "admin");
         assert!(AdminConfig::default().password_hash.is_empty());
+    }
+
+    #[test]
+    fn admin_username_loads_from_config_and_defaults_when_omitted() {
+        let default: AdminConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.username, "admin");
+        let custom: AdminConfig = serde_json::from_str(r#"{"username":"operator"}"#).unwrap();
+        assert_eq!(custom.username, "operator");
     }
 
     #[test]

@@ -15,7 +15,10 @@ pub struct AppState {
 
 impl AppState {
     pub async fn initialize(config: AppConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let admin = AdminAuth::new(config.admin.password_hash.clone())?;
+        let admin = AdminAuth::with_username(
+            config.admin.username.clone(),
+            config.admin.password_hash.clone(),
+        )?;
         if !config.admin.password_hash.is_empty() {
             let origin = reqwest::Url::parse(&config.admin.origin)
                 .map_err(|_| "Admin origin must be an HTTPS origin")?;

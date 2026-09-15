@@ -1,4 +1,5 @@
 [admin]
+username = "admin"
 password_hash = ""
 origin = "https://invite.example.com"
 

@@ -68,10 +68,24 @@ have already been committed.
 
 ## Built-In Admin
 
-There is exactly one application account, named `admin`, separate from the
+There is exactly one application account, named `admin` by default, separate from the
 LLDAP service account and the reverse proxy's credentials. No usable password
 is supplied. Without an admin password hash, application admin access remains
 disabled; public invitation redemption is still available.
+
+Set `admin.username` in `config.toml`, or override it with
+`APP__ADMIN__USERNAME`. For example:
+
+```toml
+[admin]
+username = "operator"
+```
+
+Usernames are case-sensitive and are not trimmed. Configured names must contain
+1 to 64 bytes, with no surrounding whitespace or control characters. Restart
+the application after changing the name; only the configured name is accepted.
+For Compose, set it in the mounted `config.toml`, or explicitly pass
+`APP__ADMIN__USERNAME` to the app container's environment.
 
 Generate an Argon2id hash locally using hidden password prompts:
 

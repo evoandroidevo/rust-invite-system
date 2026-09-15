@@ -76,6 +76,7 @@ pub fn require_admin_mutation(cx: &Cx, csrf: &str) -> Result<()> {
 }
 
 fn login_view(cx: &Cx, status: StatusCode, message: &'static str) -> Result<impl View> {
+    let state: &AppState = app_context(cx);
     let csrf = random_token();
     if status != StatusCode::SEE_OTHER {
         set_cookie(cx, LOGIN_COOKIE, csrf.clone(), 600);
@@ -107,7 +108,7 @@ fn login_view(cx: &Cx, status: StatusCode, message: &'static str) -> Result<impl
                     </header>
                     <form action="/admin/login" method="post" style="max-width: 28rem; display: grid; gap: 1rem">
                         <input type="hidden" name="csrf" value=(csrf) />
-                        <label>"Username" <input name="username" autocomplete="username" value="admin" required=(true) maxlength="64" /></label>
+                        <label>"Username" <input name="username" autocomplete="username" value=(state.config.admin.username.clone()) required=(true) maxlength="64" /></label>
                         <label>"Password" <input name="password" type="password" autocomplete="current-password" required=(true) maxlength="1024" /></label>
                         if !message.is_empty() {
                             <p role="alert">(message)</p>
@@ -201,6 +202,7 @@ mod tests {
     async fn setup() -> (Router, AppState) {
         let mut config = AppConfig::default();
         config.database.url = "sqlite::memory:".into();
+        config.admin.username = "operator".into();
         config.admin.password_hash = hash_password(PASSWORD).unwrap();
         config.admin.origin = ORIGIN.into();
         let state = AppState::initialize(config).await.unwrap();
@@ -264,7 +266,7 @@ mod tests {
                 &cookie_header(&challenge),
                 ORIGIN,
                 &[
-                    ("username", "admin"),
+                    ("username", "operator"),
                     ("password", PASSWORD),
                     ("csrf", challenge.value()),
                 ],

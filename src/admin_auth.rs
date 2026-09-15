@@ -14,6 +14,7 @@ const MAX_ATTEMPTS: u32 = 5;
 
 #[derive(Clone)]
 pub struct AdminAuth {
+    username: String,
     password_hash: Arc<String>,
     state: Arc<Mutex<AuthState>>,
     verifier: Arc<Semaphore>,
@@ -72,6 +73,19 @@ pub fn hash_password(password: &str) -> Result<String, &'static str> {
 
 impl AdminAuth {
     pub fn new(password_hash: String) -> Result<Self, &'static str> {
+        Self::with_username("admin".to_owned(), password_hash)
+    }
+
+    pub fn with_username(username: String, password_hash: String) -> Result<Self, &'static str> {
+        if username.is_empty()
+            || username.len() > 64
+            || username.trim() != username
+            || username.chars().any(char::is_control)
+        {
+            return Err(
+                "Admin username must contain 1 to 64 bytes without surrounding whitespace or control characters",
+            );
+        }
         if !password_hash.is_empty() {
             let parsed = PasswordHash::new(&password_hash).map_err(|_| "Invalid admin hash")?;
             let memory = parsed.params.get_decimal("m").unwrap_or(0);
@@ -89,6 +103,7 @@ impl AdminAuth {
             }
         }
         Ok(Self {
+            username,
             password_hash: Arc::new(password_hash),
             state: Arc::new(Mutex::new(AuthState {
                 session: None,
@@ -123,7 +138,7 @@ impl AdminAuth {
             .try_acquire_owned()
             .map_err(|_| LoginError::Throttled)?;
         let stored_hash = self.password_hash.clone();
-        let valid_username = username == "admin";
+        let valid_username = username == self.username;
         let valid = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             PasswordHash::new(&stored_hash).is_ok_and(|parsed| {
@@ -187,6 +202,34 @@ impl AdminAuth {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn configured_username_replaces_default_and_matches_exactly() {
+        let password = "test-only admin password";
+        let auth =
+            AdminAuth::with_username("operator".into(), hash_password(password).unwrap()).unwrap();
+        for username in ["admin", "Operator", " operator"] {
+            assert_eq!(
+                auth.login(username, password.into()).await,
+                Err(LoginError::InvalidCredentials)
+            );
+        }
+        assert!(auth.login("operator", password.into()).await.is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_configured_username() {
+        for username in [
+            String::new(),
+            " ".into(),
+            " operator".into(),
+            "operator\n".into(),
+            "x".repeat(65),
+        ] {
+            assert!(AdminAuth::with_username(username, String::new()).is_err());
+        }
+        assert!(AdminAuth::with_username("x".repeat(64), String::new()).is_ok());
+    }
 
     #[tokio::test]
     async fn missing_credentials_disable_login() {
