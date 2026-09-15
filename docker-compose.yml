@@ -41,6 +41,7 @@ services:
       APP_UPSTREAM: app:8080
     networks:
       - backend
+      - edge
 
 volumes:
   app-data:
@@ -50,3 +51,5 @@ volumes:
 networks:
   backend:
     internal: true
+  edge:
+    internal: false

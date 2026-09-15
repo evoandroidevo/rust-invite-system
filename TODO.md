@@ -4,8 +4,9 @@ Scope: rust-invite-system
 Review date: 2026-09-13
 Status: Deployment hardening started; built-in admin authentication implemented.
 Fresh verification on 2026-09-13: ordinary Cargo tests passed (21 passed,
-2 Docker smoke tests ignored); local compiler is Rust 1.98.1. Docker integration,
-deployment checks, and dependency scanning remain unverified.
+2 Docker smoke tests ignored); local compiler is Rust 1.98.1. LLDAP integration,
+production deployment checks, and dependency scanning remain unverified.
+Local Docker boundary verification on 2026-09-15 is recorded below.
 
 Unchecked items include verification tasks, proposed designs, and regression
 requirements, not just confirmed defects. Passing tests do not establish that
@@ -44,6 +45,59 @@ the deployment or complete redemption workflow is secure.
   below, are absent from this checkout. The README now provides the current
   deployment-boundary guidance; historical citations are not fresh evidence.
 
+### Access-Boundary Static Review (2026-09-15)
+
+- Reviewed current README deployment guidance and codebase conventions. Neither
+  root `AGENTS.md` nor `.github/copilot-instructions.md` was present at the
+  checked paths. Refreshed the source index before reviewing current Compose;
+  the earlier cached configuration was stale.
+- Compose requires separate application and proxy admin credentials, uses
+  `app:8080` as Caddy's upstream, publishes only proxy ports 80/443, and attaches
+  both services solely to an internal backend network. This is static evidence,
+  not a live bypass test. External directory reachability remains unverified.
+  The subsequent live review below corrects the proxy's internal-only attachment.
+- Caddy protects `/admin*` with Basic authentication and sets no-referrer.
+  Nginx protects `/admin/`, redirects exact `/admin` there, and configures
+  request limits for admin paths and invite submission. Both examples require
+  deployment-specific hostnames, certificates, and credentials. Neither proxy
+  was run in this review; client-address trust and effective limits remain open.
+- Dockerfile sets runtime UID 10001, creates an owned `/app/data` directory,
+  and installs CA certificates. Its base-image tags are mutable. Actual mounted
+  volume permissions, container privileges, and network isolation still need
+  runtime verification.
+- Directly inspected `migrations/0001_invites.sql` with user permission because
+  the index omits SQL. It declares non-null primary keys, unique token hashes,
+  an expiry index, an event `(invite_id, id)` index, and an event foreign key
+  with `ON DELETE CASCADE`. It has no persistent redemption claim or recovery
+  state, and no CHECK constraints for JSON, timestamps, or lifecycle consistency.
+  Foreign-key enforcement on runtime connections and direct constraint-rejection
+  tests remain unverified; schema declarations alone do not establish these.
+- Fresh verification: `cargo test invite_storage::tests` passed all four tests
+  covering migration-backed creation/history, revocation, concurrent consumption,
+  and stale cleanup. These tests do not cover LLDAP provisioning, deployed proxy
+  behavior, backup/restore, or upgrades of an existing production database.
+
+### Live Docker Boundary Review (2026-09-15)
+
+- Built the current Dockerfile successfully and tested the real application with
+  Caddy 2.8 on Docker Desktop's Linux engine 29.8.0. A controlled comparison found
+  that an internal-only proxy had no active host port mapping; attaching a normal
+  bridge immediately activated it. Compose now gives only the proxy a non-internal
+  `edge` network. The app remains solely on the internal backend with no host ports.
+- Seven deployment-boundary checks passed, including the new opt-in live test.
+  Certificate-verified HTTPS challenged unauthenticated and forged-header requests
+  to `/admin` and `/admin/login`. Valid proxy credentials reached the application's
+  login form, but did not authorize `/admin` without an application session.
+  Login responses retained no-store/no-referrer headers.
+- Runtime inspection confirmed UID 10001, no app host port mappings, and a single
+  internal bridge for the app. The same HTTP probe reached the running app from
+  its trusted backend and failed to connect from a separate untrusted network.
+- The fixture uses a random loopback HTTPS port, fresh named volumes, throwaway
+  credentials/certificates, and no local config or directory server. Temporary
+  containers, networks, volumes, and files are cleaned up; image caches remain.
+  It does not verify an external machine's access, IPv6, real deployment overrides,
+  Nginx, LLDAP reachability, or provisioning. Those acceptance checks remain open.
+
 ## Codebase Documentation Progress
 
 - [x] Phase 1: Run scan, read intent documents.
@@ -75,11 +129,12 @@ close the implementation or runtime verification tasks below.
   no-referrer headers. Compose mounts a Caddy upstream pointing to loopback
   inside the proxy container, not the separate app service. The upstream is now
   corrected and parser-checked; live deployment verification remains open.
-- [TODO] Inspect migration constraints/indexes: the SQL file remains absent from
-  the available code index. Deployment behavior still requires runtime checks.
-- [TODO] Recheck source freshness before implementation. Incremental indexing
-  reported no changes, but the later marker search reported an unindexed-change
-  caveat; do not treat its empty result as proof that source markers are absent.
+- [x] Inspect migration constraints/indexes: directly reviewed the SQL file with
+      user permission on 2026-09-15; see the static review above. Deployment behavior
+      and direct constraint-rejection tests still require runtime checks.
+- [x] Recheck source freshness: refreshed the index on 2026-09-15 before reviewing
+      current Compose. This does not establish absence of source markers or make
+      unsupported files available through the index.
 - Decision (2026-09-13): Support exactly one built-in admin account. Clearly
   document that direct public exposure is not safe and strongly recommend a
   trusted reverse proxy with an additional authentication solution.
@@ -208,7 +263,8 @@ the explicit exception.
 
 ## P0 - Verify the Access Boundary
 
-- [ ] Review repository guidance, proxy configuration, Dockerfile, and migrations.
+- [x] Review repository guidance, proxy configuration, Dockerfile, and migrations
+      (static review completed 2026-09-15; runtime verification remains separate).
 - [x] Implement exactly one built-in admin account with secure credential
       provisioning, password hashing, and no default usable credentials.
 - [x] Add secure session handling, logout, and admin login throttling.
@@ -218,6 +274,13 @@ the explicit exception.
       exposure; strongly recommend a trusted reverse proxy with additional auth.
 - [ ] Document and test backend isolation so deployments using proxy auth cannot
       bypass it by reaching the application directly.
+      Progress (2026-09-15): README now defines trusted-host/network assumptions
+      and live bypass probes. Seven deployment-boundary checks passed, including
+      live Caddy HTTPS/authentication and cross-network IPv4 probes; the proxy-only
+      edge network fixes the observed host-port publishing failure. CI runs the
+      CLI-dependent configuration check; the live Docker test is opt-in.
+      This remains open for actual-deployment/external-machine acceptance and
+      IPv6 verification where enabled; local fixture success is not that evidence.
 - [x] Verify CSRF protection for invite generation and revocation.
 - [ ] Enforce the chosen group policy: any pre-existing LLDAP group, with
       existence checked before provisioning and no implicit group creation.

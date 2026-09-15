@@ -51,7 +51,10 @@ from reaching the backend directly.
 
 The [Compose deployment](docker-compose.yml) publishes only the proxy ports;
 the app has no published host port and shares an internal backend network with
-the proxy. The mounted [Caddy example](docs/caddy/Caddyfile.example) protects
+the proxy. Only the proxy also joins the non-internal `edge` network, which
+allows Docker to publish its host ports. An internal-only proxy had no active
+published ports in the Docker 29.8.0 live check. The app must not join `edge`.
+The mounted [Caddy example](docs/caddy/Caddyfile.example) protects
 `/admin*` with HTTP Basic authentication. Configure the hostname, certificate
 files, and `CADDY_ADMIN_PASSWORD_HASH` before deployment. Verify unauthenticated
 admin requests are rejected and the backend is unreachable from untrusted
@@ -65,6 +68,107 @@ connectivity and the complete deployment workflow still require runtime checks.
 Local `.env`, `dev.env`, and `config.toml` files are ignored by Git. Keep real
 credentials out of tracked files. An ignore rule does not protect secrets that
 have already been committed.
+
+### Backend Isolation Checks
+
+The Compose boundary assumes that the Docker host, Docker administrators, the
+proxy, and every container attached to `backend` are trusted. An internal bridge
+network is not an authentication boundary against those actors. On Linux, the
+host can normally reach container addresses directly even without published
+ports. Do not grant untrusted users access to Docker's socket or API, attach
+untrusted workloads to `backend`, or route untrusted traffic to its subnet.
+
+Keep the app attached only to the dedicated internal bridge network, with no
+published ports (including loopback mappings) and no `network_mode` override.
+Review Compose overrides, Docker daemon routing settings, host firewall rules,
+and any manually attached networks before deployment. Do not add a public app
+network to solve directory connectivity; arrange an explicitly trusted directory
+path and verify it separately. For a standalone host deployment, bind the app
+to loopback and keep local users/processes trusted, or use an equivalently
+restricted private interface. Verify the actual listener, not just configuration.
+
+Run the automated template check from the repository root:
+
+```sh
+cargo test --test deployment_boundary
+cargo test --test deployment_boundary compose_keeps_backend_private -- --ignored
+```
+
+This requires the Docker Compose CLI but no running daemon. It parses normalized
+Compose JSON using the existing `serde_json` dependency, supplies dummy credentials
+only to the child process, and disables automatic `.env` loading. It does not
+start containers or print the rendered configuration. Negative tests reject
+published app ports, alternate app networks/namespaces, external or non-internal
+backend networks, custom bridge options, and a disconnected or misdirected proxy.
+They also require a non-internal proxy edge network. CI explicitly runs the
+CLI-dependent test; ordinary `cargo test` skips the CLI and live Docker tests.
+The check covers the tracked Compose file, not deployment overrides or live
+firewall behavior. Do not publish rendered Compose output: it can contain secrets.
+
+To run the live regression test, build the current application image and supply
+its tag through `BOUNDARY_APP_IMAGE`. OpenSSL must be on PATH, or its executable
+path must be set in `BOUNDARY_OPENSSL`. For example, in PowerShell with Git for
+Windows installed:
+
+```powershell
+docker build -t rust-invite-system-boundary-test .
+if ($LASTEXITCODE -ne 0) { throw 'Application image build failed' }
+$env:BOUNDARY_APP_IMAGE = 'rust-invite-system-boundary-test'
+$env:BOUNDARY_OPENSSL = 'C:\Program Files\Git\usr\bin\openssl.exe'
+cargo test --test deployment_boundary live_proxy_and_backend_isolation -- --ignored --nocapture
+```
+
+On other platforms, export the same image variable and use the local OpenSSL
+executable. Rebuild the image after application changes; the test does not build
+or check source freshness itself. Docker must be running and able to obtain
+`caddy:2.8` and `curlimages/curl:8.12.1`.
+
+The live fixture derives its configuration from the tracked Compose file, keeps
+the mounted Caddy example, and uses an isolated project with fresh volumes,
+throwaway credentials, and a one-day test certificate. It omits the local
+`config.toml` mount, publishes HTTPS on a random loopback-only port, and does
+not start a directory server. Certificate and hostname verification stay enabled.
+It checks proxy-auth challenges, forged-header rejection, application auth,
+no-store/no-referrer headers, runtime UID, actual app port mappings, and IPv4
+access from trusted versus untrusted container networks. Containers, networks,
+volumes, and temporary files are removed on success or ordinary failure. After
+forced process termination, inspect and remove only that run's `boundary-*`
+project resources; do not run a global prune. Downloaded/built images remain cached.
+The live test is opt-in and is not currently run by CI.
+
+Before approving a running deployment, use the same Compose project and override
+arguments used to start it and record these checks:
+
+1. Inspect the app container's `HostConfig.PortBindings` and
+   `NetworkSettings.Ports`: there must be no published host mapping. An exposed
+   container port with a null mapping is not a published port. Confirm its only
+   network is the intended backend; inspect that network for `Internal: true`,
+   bridge driver, expected options, and only trusted members. Inspect actual
+   running state, not just `docker compose config`.
+2. From an untrusted machine, request every deployment host address on port 8080
+   and every directly routable backend address. Test IPv4 and IPv6 where enabled.
+   For example, use `curl --noproxy '*' --connect-timeout 3 --max-time 5
+http://DEPLOYMENT_HOST:8080/admin/login` (on one line). Repeat from an
+   untrusted container on a different network. No HTTP response is acceptable:
+   even an application 401 proves the reverse proxy can be bypassed. Distinguish
+   expected refusal/timeout from DNS, test-client, or unrelated routing failures.
+3. Through the public HTTPS hostname, GET `/admin` and `/admin/login` without
+   credentials, following redirects. Both must end in a proxy-auth challenge
+   (401 with the configured Basic-auth examples). Repeat with forged
+   `X-Forwarded-User: admin`, `Remote-User: admin`, and
+   `X-Forwarded-For: 127.0.0.1` headers; these must not bypass proxy authentication.
+4. With valid proxy credentials but no application cookie, GET `/admin/login`
+   must render the login form, while `/admin` must still require application
+   authentication. Use a browser or an interactive password prompt, not a
+   password in shell history. This positive control distinguishes a working
+   authentication boundary from a stopped app, bad upstream, or broken TLS.
+5. Verify directory reachability from the app separately. Repeat these checks
+   after changes to networking, proxy configuration, Docker, or firewall rules.
+
+Do not disable certificate verification for HTTPS probes. Record deployment
+versions, probe locations, destination addresses, results, and remaining
+assumptions without credentials, cookies, or invitation codes. A local Compose
+configuration pass does not close this deployment acceptance procedure.
 
 ## Built-In Admin
 
