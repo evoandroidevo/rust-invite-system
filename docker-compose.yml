@@ -36,6 +36,7 @@ services:
       - caddy-config:/config
     environment:
       CADDY_ADMIN_PASSWORD_HASH: ${CADDY_ADMIN_PASSWORD_HASH:?set CADDY_ADMIN_PASSWORD_HASH}
+      APP_UPSTREAM: app:8080
     networks:
       - backend
 
