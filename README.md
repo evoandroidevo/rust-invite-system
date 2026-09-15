@@ -42,9 +42,30 @@ If your LDAP server uses a private or self-signed certificate, set `APP__LDAP__T
 
 Use a dedicated LLDAP service account for provisioning instead of an all-powerful admin account. The account only needs the permissions required to create users, set passwords, and manage group membership for invited users. For local development, keep LDAP traffic on the loopback/private network; for remote LDAP endpoints, enable TLS and trust the server certificate explicitly.
 
-Reverse-proxy examples for Caddy and Nginx live in [docs/README.md](docs/README.md).
+## Deployment Boundary
 
-The production container and compose deployment notes live in [docs/deployment.md](docs/deployment.md).
+Direct public exposure of the application is not safe. A built-in admin account
+is planned but is not implemented yet; even after it is added, built-in
+authentication alone will not make direct public exposure safe. Use a trusted
+reverse proxy with an additional authentication solution, and prevent clients
+from reaching the backend directly.
+
+The [Compose deployment](docker-compose.yml) publishes only the proxy ports;
+the app has no published host port and shares an internal backend network with
+the proxy. The mounted [Caddy example](docs/caddy/Caddyfile.example) protects
+`/admin*` with HTTP Basic authentication. Configure the hostname, certificate
+files, and `CADDY_ADMIN_PASSWORD_HASH` before deployment. Verify unauthenticated
+admin requests are rejected and the backend is unreachable from untrusted
+networks; the configuration alone is not proof of isolation.
+
+Compose sets `APP_UPSTREAM=app:8080` in the proxy container. When using the same
+Caddy example on the host, its default upstream remains `127.0.0.1:8080`.
+The directory must be reachable from the app's internal network; external LLDAP
+connectivity and the complete deployment workflow still require runtime checks.
+
+Local `.env`, `dev.env`, and `config.toml` files are ignored by Git. Keep real
+credentials out of tracked files. An ignore rule does not protect secrets that
+have already been committed.
 
 ## Versioning
 

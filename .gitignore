@@ -27,6 +27,7 @@ target
 
 # Local LLDAP integration-test credentials
 /dev.env
+.env
 /config.toml
 /data/
 docs/.codebase-scan.txt

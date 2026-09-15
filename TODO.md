@@ -2,7 +2,7 @@
 
 Scope: rust-invite-system
 Review date: 2026-09-13
-Status: Seven-document codebase workflow completed; implementation remains proposed.
+Status: Seven-document codebase workflow completed; deployment hardening started.
 Fresh verification on 2026-09-13: ordinary Cargo tests passed (21 passed,
 2 Docker smoke tests ignored); local compiler is Rust 1.98.1. Docker integration,
 deployment checks, and dependency scanning remain unverified.
@@ -10,6 +10,20 @@ deployment checks, and dependency scanning remain unverified.
 Unchecked items include verification tasks, proposed designs, and regression
 requirements, not just confirmed defects. Passing tests do not establish that
 the deployment or complete redemption workflow is secure.
+
+## Implementation Progress
+
+- First deployment-hardening pass: Compose now sets Caddy's upstream to
+  `app:8080`, with loopback retained as the standalone example default.
+  Compose parsing and assertions passed for the upstream, shared internal
+  backend network, and absence of app host ports. Caddy 2.8 adaptation passed
+  and produced `app:8080`; this does not verify live proxying, certificates,
+  authentication enforcement, or directory reachability.
+- Added a `.env` ignore rule and a README deployment-boundary warning.
+  The single built-in admin account remains unimplemented.
+- `docs/README.md` and `docs/deployment.md`, cited by the historical review
+  below, are absent from this checkout. The README now provides the current
+  deployment-boundary guidance; historical citations are not fresh evidence.
 
 ## Codebase Documentation Progress
 
@@ -40,7 +54,8 @@ close the implementation or runtime verification tasks below.
 - Dockerfile and proxy examples were inspected on 2026-09-13. The runtime image
   defines a non-root user, and the examples define admin authentication and
   no-referrer headers. Compose mounts a Caddy upstream pointing to loopback
-  inside the proxy container, not the separate app service; correct and test it.
+  inside the proxy container, not the separate app service. The upstream is now
+  corrected and parser-checked; live deployment verification remains open.
 - [TODO] Inspect migration constraints/indexes: the SQL file remains absent from
   the available code index. Deployment behavior still requires runtime checks.
 - [TODO] Recheck source freshness before implementation. Incremental indexing
@@ -180,7 +195,7 @@ the explicit exception.
 - [ ] Add secure session handling, logout, and admin login throttling.
 - [ ] Protect admin pages and mutations with application authentication and
       authorization; keep the login endpoint accessible without a session.
-- [ ] Document that built-in authentication alone is not safe for direct public
+- [x] Document that built-in authentication alone is not safe for direct public
       exposure; strongly recommend a trusted reverse proxy with additional auth.
 - [ ] Document and test backend isolation so deployments using proxy auth cannot
       bypass it by reaching the application directly.
@@ -243,11 +258,11 @@ but the handler passes the original values to directory operations.
 
 - [ ] Reject development credentials in production and validate transport settings
       against the documented deployment mode.
-- [ ] Ensure local `.env` files are ignored before following deployment guidance;
-      the repository currently ignores `dev.env` but not a general `.env` file.
-- [ ] Correct the containerized Caddy upstream to address the app service rather
-      than proxy-container loopback; verify directory reachability from the
-      internal backend network and complete the end-to-end deployment check.
+- [x] Ensure local `.env` files are ignored before following deployment guidance.
+- [x] Correct the containerized Caddy upstream to address the app service rather
+      than proxy-container loopback; validate Compose and Caddy parsing.
+- [ ] Verify directory reachability from the internal backend network and
+      complete the end-to-end deployment check.
 - [ ] Support explicitly configured plaintext HTTP/LDAP on isolated, properly
       firewalled networks; document that this exposes credentials to anyone able
       to observe that traffic and that the app cannot verify firewall isolation.
